@@ -1917,10 +1917,10 @@ h1 { margin: 0; font-size: 18px; }
   width: 2px;
   height: 1.25em;
   margin: -1px -1px;
-  background: var(--active);
+  background: #fff;
   vertical-align: text-bottom;
   pointer-events: none;
-  animation: cursor-blink 1s steps(2, start) infinite;
+  animation: cursor-blink 1.06s step-end infinite;
 }
 @keyframes cursor-blink {
   50% { opacity: 0; }
@@ -1975,7 +1975,7 @@ h1 { margin: 0; font-size: 18px; }
 .mc-hint { color: var(--muted); font-size: 11px; }
 .mc-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: start center; padding-top: min(10vh, 80px); background: color-mix(in srgb, #000 32%, transparent); }
 .mc-modal.hidden { display: none; }
-.mc-modal-panel { width: min(820px, calc(100vw - 40px)); max-height: min(78vh, 720px); display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.mc-modal-panel { width: min(900px, calc(100vw - 40px)); height: 80vh; max-height: 80vh; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
 .mc-modal-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 650; }
 .mc-modal-head span { margin-right: auto; }
 .mc-modal-text { width: 100%; height: 100%; box-sizing: border-box; resize: none; border: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.55 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -2851,6 +2851,17 @@ document.addEventListener('keydown', (event) => {
     }
   }
 
+  // Opt/Alt + Left/Right: word-wise caret jump (source or diff view).
+  if (event.altKey && !event.metaKey && !event.ctrlKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    var wae = document.activeElement;
+    var wInField = wae && (wae.tagName === 'INPUT' || wae.tagName === 'TEXTAREA' || wae.tagName === 'SELECT');
+    if (!wInField && treeFocusIndex < 0) {
+      var wdir = event.key === 'ArrowRight' ? 1 : -1;
+      if (isSourceViewerVisible() && viewerCursor) { event.preventDefault(); moveSourceWord(wdir, event.shiftKey); return; }
+      if (isDiffViewVisible() && diffCursor) { event.preventDefault(); moveDiffWord(wdir, event.shiftKey); return; }
+    }
+  }
+
   if (treeFocusIndex >= 0 && handleTreeKey(event)) return;
   if (treeFocusIndex < 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isSourceViewerVisible() && handleSourceCaretKey(event)) return;
   if (treeFocusIndex < 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isDiffViewVisible() && handleDiffCaretKey(event)) return;
@@ -3272,6 +3283,18 @@ function moveDiffCursor(dLine, dColumn, extend) {
   setDiffCursor(diffCursor.path, side, ri, col, true); // clears diffSelectionAnchor + native selection
   if (anchor) { diffSelectionAnchor = anchor; applyDiffSelection(); } // re-establish the Shift selection
 }
+function moveDiffWord(dir, extend) {
+  if (!diffCursor) return;
+  var wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) return;
+  var row = diffRowAt(wrapper, diffCursor.side, diffCursor.rowIndex);
+  var text = diffLineText(row);
+  var ncol = nextWordBoundary(text, diffCursor.column, dir);
+  if (ncol === diffCursor.column) return; // already at the line edge — plain arrows change lines
+  var anchor = extend ? (diffSelectionAnchor || { side: diffCursor.side, rowIndex: diffCursor.rowIndex, column: diffCursor.column }) : null;
+  setDiffCursor(diffCursor.path, diffCursor.side, diffCursor.rowIndex, ncol, true);
+  if (anchor) { diffSelectionAnchor = anchor; applyDiffSelection(); }
+}
 function handleDiffCaretKey(event) {
   if (!isDiffViewVisible() || !diffCursor) return false;
   var ae = document.activeElement;
@@ -3614,6 +3637,12 @@ document.addEventListener('keydown', function (event) {
 }, true);
 
 refreshComments();
+
+// In Electron, the Review menu's Cmd/Ctrl+Shift+/ and +. accelerators arrive here via IPC
+// (macOS reserves Cmd+? for its Help search, so the menu claims it and routes to these views).
+if (window.monacoriMenu && typeof window.monacoriMenu.onMergedView === 'function') {
+  window.monacoriMenu.onMergedView(function (kind) { openMergedView(kind); });
+}
 
 (function checkForUpdate() {
   try { if (sessionStorage.getItem('monacori-update-checked')) return; } catch (e) {}
@@ -4044,6 +4073,38 @@ function moveSourceCursor(dLine, dColumn, extend) {
   setSourceCursor(viewerCursor.path, line, col, true, -1);
   applySourceSelection();
 }
+// Word boundary in text from col in direction dir (+1 next, -1 prev): skip non-word, then word.
+function nextWordBoundary(text, col, dir) {
+  var isWord = function (ch) { return /[A-Za-z0-9_$]/.test(ch); };
+  var i = col;
+  if (dir > 0) {
+    while (i < text.length && !isWord(text.charAt(i))) i++;
+    while (i < text.length && isWord(text.charAt(i))) i++;
+  } else {
+    while (i > 0 && !isWord(text.charAt(i - 1))) i--;
+    while (i > 0 && isWord(text.charAt(i - 1))) i--;
+  }
+  return i;
+}
+function moveSourceWord(dir, extend) {
+  if (!viewerCursor) return;
+  var file = sourceByPath.get(viewerCursor.path);
+  if (!file || !file.embedded) return;
+  var lines = file.content.split(/\r?\n/);
+  var line = viewerCursor.lineIndex, col = viewerCursor.column;
+  var text = lines[line] || '';
+  if (dir > 0) {
+    if (col >= text.length) { if (line < lines.length - 1) { line += 1; col = 0; } }
+    else col = nextWordBoundary(text, col, 1);
+  } else {
+    if (col <= 0) { if (line > 0) { line -= 1; col = (lines[line] || '').length; } }
+    else col = nextWordBoundary(text, col, -1);
+  }
+  if (extend) { if (!selectionAnchor) selectionAnchor = { lineIndex: viewerCursor.lineIndex, column: viewerCursor.column }; }
+  else selectionAnchor = null;
+  setSourceCursor(viewerCursor.path, line, col, true, -1);
+  applySourceSelection();
+}
 
 function applySourceSelection() {
   const sel = window.getSelection();
@@ -4260,6 +4321,7 @@ function renderHttpTable(file) {
   httpVarsByPath.set(file.path, parsed.vars);
   const env = Object.assign({}, parsed.vars, currentHttpEnv());
   const lines = String(file.content).split(/\r?\n/);
+  const cursor = viewerCursor && viewerCursor.path === file.path ? viewerCursor : null;
   const runAtLine = {};
   const respAfterLine = {};
   requests.forEach(function (req, idx) {
@@ -4270,12 +4332,13 @@ function renderHttpTable(file) {
   lines.forEach(function (line, index) {
     const hasRun = Object.prototype.hasOwnProperty.call(runAtLine, index);
     const reqIdx = hasRun ? runAtLine[index] : -1;
+    const isCursorLine = Boolean(cursor && cursor.lineIndex === index);
     const gutter = hasRun
       ? '<button type="button" class="http-run" data-req="' + reqIdx + '" title="Run request (Cmd/Alt+Enter)" aria-label="Run request">&#9654;</button>'
       : '';
-    rows += '<tr class="source-row http-row' + (hasRun ? ' http-request-line' : '') + '" data-line-index="' + index + '">'
+    rows += '<tr class="source-row http-row' + (hasRun ? ' http-request-line' : '') + (isCursorLine ? ' cursor-line' : '') + '" data-line-index="' + index + '">'
       + '<td class="num http-gutter">' + gutter + '<span class="num-text">' + (index + 1) + '</span></td>'
-      + '<td class="source-code">' + highlightHttpLine(line, env) + '</td>'
+      + '<td class="source-code">' + (isCursorLine ? renderHttpLineWithCursor(line, env, cursor.column) : highlightHttpLine(line, env)) + '</td>'
       + '</tr>';
     if (Object.prototype.hasOwnProperty.call(respAfterLine, index)) {
       const rIdx = respAfterLine[index];
@@ -4283,6 +4346,10 @@ function renderHttpTable(file) {
     }
   });
   return '<table class="source-table http-table"><tbody>' + rows + '</tbody></table>';
+}
+function renderHttpLineWithCursor(text, env, column) {
+  var col = Math.max(0, Math.min(column, text.length));
+  return highlightHttpLine(text.slice(0, col), env) + '<span class="code-cursor" aria-hidden="true"></span>' + highlightHttpLine(text.slice(col), env);
 }
 
 function highlightHttpLine(line, env) {
