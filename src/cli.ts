@@ -636,6 +636,8 @@ export function buildDiffReview(input: {
     httpEnvironments,
     title: input.title,
     subtitle: diffSubtitle(input),
+    projectName: basename(process.cwd()),
+    projectPath: process.cwd(),
     watch: Boolean(input.watch),
     ignoreWhitespace: Boolean(input.ignoreWhitespace),
     signature,
@@ -956,6 +958,8 @@ function renderDiffHtml(input: {
   httpEnvironments: Record<string, Record<string, string>>;
   title: string;
   subtitle: string;
+  projectName: string;
+  projectPath: string;
   watch?: boolean;
   ignoreWhitespace?: boolean;
   signature?: string;
@@ -973,7 +977,7 @@ function renderDiffHtml(input: {
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<link rel="icon" href="data:,">',
-    `<title>${escapeHtml(input.title)}</title>`,
+    `<title>${escapeHtml(input.title)} - ${escapeHtml(input.projectName)}</title>`,
     "<style>",
     diff2HtmlCss(),
     diffCss(),
@@ -981,10 +985,13 @@ function renderDiffHtml(input: {
     "</head>",
     "<body>",
     '<aside class="sidebar" aria-label="Review navigation">',
-    '<label class="search"><span class="visually-hidden">Search</span><input id="review-search" type="search" placeholder="Search files or code"></label>',
+    '<div class="sidebar-scroll">',
+    `<div class="sidebar-brand" title="${escapeAttr(input.projectPath)}"><span class="brand-mark">monacori</span><span class="brand-project">${escapeHtml(input.projectName)}</span></div>`,
     '<div class="tabs"><button type="button" class="tab" data-tab="changes">Changes</button><button type="button" class="tab active" data-tab="files">Files</button></div>',
     `<div class="tab-panel hidden" id="changes-panel">${fileNav}</div>`,
     `<div class="tab-panel" id="files-panel">${sourceNav}</div>`,
+    "</div>",
+    `<div class="sidebar-footer"><span class="app-version">monacori${packageVersion ? " v" + escapeHtml(packageVersion) : ""}</span><span id="app-update-flag" class="app-update-flag hidden" title="Update available">update available</span><button type="button" id="app-info-btn" class="settings-btn" aria-haspopup="dialog" aria-label="About monacori" title="About monacori">⚙</button></div>`,
     "</aside>",
     '<div class="sidebar-resizer" aria-hidden="true"></div>',
     '<main class="content">',
@@ -1000,13 +1007,12 @@ function renderDiffHtml(input: {
     '<div class="toolbar source-toolbar">',
     '<div class="source-file-meta"><span id="source-title">Source</span><span id="source-meta">Select a file from the Files tab.</span></div>',
     '<select id="http-env-select" class="http-env-select hidden" title="HTTP Client environment" aria-label="HTTP environment"></select>',
-    '<button type="button" id="source-viewed-toggle" class="plain-button source-viewed-toggle" aria-pressed="false" title="Mark this file as viewed" hidden>Viewed</button>',
     '<button type="button" id="back-to-diff" class="plain-button">Diff</button>',
     "</div>",
     '<div id="source-body" class="source-body empty">Select a file from the Files tab.</div>',
     "</section>",
     "</main>",
-    '<div id="update-badge" class="update-badge hidden" title="npm install -g @happy-nut/monacori"></div>',
+    `<div id="app-info" class="app-info hidden" role="dialog" aria-modal="false" aria-label="About monacori"><div class="app-info-head">monacori <span class="app-info-ver">${packageVersion ? "v" + escapeHtml(packageVersion) : ""}</span></div><div id="app-info-status" class="app-info-status">Checking for updates…</div><div class="app-info-cmd"><code>npm i -g @happy-nut/monacori</code><button type="button" id="app-info-copy" class="plain-button">Copy</button></div><div class="app-info-keys"><div class="app-info-keys-h">Keyboard shortcuts</div><div class="keys-grid"><kbd>F7 / ]</kbd><span>Next change</span><kbd>Shift+F7 / [</kbd><span>Previous change</span><kbd>Shift Shift</kbd><span>Find file</span><kbd>Cmd/Ctrl+Shift+F</kbd><span>Find in files</span><kbd>Cmd/Ctrl+E</kbd><span>Recent files</span><kbd>Cmd/Ctrl+&darr;</kbd><span>Go to definition</span><kbd>Cmd/Ctrl+1 / 0</kbd><span>Files / Changes tab</span><kbd>Tab</kbd><span>Sidebar &harr; content</span><kbd>Opt/Alt+&larr;/&rarr;</kbd><span>Word jump (vim w)</span><kbd>Cmd/Ctrl+&larr;/&rarr;</kbd><span>Line start / end</span><kbd>Shift+arrows</kbd><span>Extend selection</span><kbd>&lt;</kbd><span>Toggle viewed</span><kbd>? &nbsp;&gt;</kbd><span>Add question / change</span><kbd>Cmd/Ctrl+Shift+/ .</kbd><span>All questions / changes</span><kbd>Cmd/Ctrl+Shift+W</kbd><span>Ignore whitespace</span><kbd>Cmd/Ctrl+Enter</kbd><span>Save comment</span></div></div></div>`,
     '<div id="quick-open" class="quick-open hidden" role="dialog" aria-modal="true" aria-label="Quick open">',
     '<div class="quick-open-panel">',
     '<div class="quick-open-title"><span id="quick-open-mode">Search files</span></div>',
@@ -1526,6 +1532,8 @@ function diffCss(): string {
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
+/* Reserve the scrollbar gutter so collapsing/expanding a file does not shift the layout. */
+html { scrollbar-gutter: stable; }
 body {
   display: grid;
   grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
@@ -1537,9 +1545,16 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--sidebar);
+}
+.sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 12px;
 }
 .sidebar-resizer {
@@ -1573,15 +1588,28 @@ body {
 }
 .live-status { color: var(--muted); }
 .live-status.watching { color: var(--active); }
-.search { display: grid; gap: 6px; margin-bottom: 8px; color: var(--muted); font-size: 12px; }
-.search input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 9px;
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.sidebar-brand .brand-mark {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sidebar-brand .brand-project {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text);
-  background: var(--bg);
-  font: 13px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tabs { display: none; }
 .tab, .plain-button {
@@ -1595,21 +1623,82 @@ body {
 }
 .tab.active, .plain-button:hover { border-color: var(--active); color: var(--active); }
 .hidden { display: none !important; }
-.update-badge {
+.sidebar-footer {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sidebar);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.sidebar-footer .app-version { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-update-flag { color: var(--active); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.settings-btn {
+  margin-left: auto;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.settings-btn:hover { color: var(--active); border-color: var(--border); }
+.app-info {
   position: fixed;
   left: 12px;
-  bottom: 10px;
+  bottom: 46px;
   z-index: 60;
-  font-size: 11px;
-  line-height: 1;
-  padding: 5px 11px;
-  border-radius: 11px;
-  background: var(--active);
-  color: #fff;
-  font-weight: 500;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  color: var(--text);
 }
+.app-info-head { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.app-info-head .app-info-ver { color: var(--muted); font-weight: 500; }
+.app-info-status { color: var(--muted); margin-bottom: 10px; }
+.app-info-status.has-update { color: var(--active); font-weight: 600; }
+.app-info-cmd { display: flex; align-items: center; gap: 6px; }
+.app-info-cmd code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font: 11px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+}
+.app-info-cmd .plain-button { padding: 5px 9px; font-size: 11px; }
+.app-info-keys { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.app-info-keys-h { font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.keys-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; align-items: center; }
+.keys-grid kbd {
+  justify-self: start;
+  font: 10px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.keys-grid span { color: var(--muted); }
 .diff2html-container { min-width: 0; caret-color: transparent; }
 .mc-diff-cursor-row .d2h-code-side-line { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--active) 70%, transparent); }
 #diff2html-container[contenteditable] { outline: none; }
@@ -1634,6 +1723,8 @@ body {
 .d2h-file-wrapper.file-viewed:hover {
   opacity: 1;
 }
+/* Marking a file viewed folds its diff down to just the header; toggle viewed again to reopen. */
+.d2h-file-wrapper.file-viewed .d2h-files-diff { display: none; }
 .d2h-file-name { color: var(--text); }
 .d2h-icon { fill: var(--muted); }
 .d2h-tag { border-color: var(--border); }
@@ -1722,31 +1813,51 @@ body {
 .file-counter:not(:empty) { margin-right: 14px; color: var(--muted); }
 .review-status .ws-ignored { color: var(--token-tag); border: 1px solid color-mix(in srgb, var(--token-tag) 45%, transparent); border-radius: 999px; padding: 0 7px; }
 .d2h-file-collapse {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
+  gap: 6px;
   margin-left: 8px;
+  padding: 3px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  color: transparent;
+  color: var(--muted);
   background: var(--panel);
-  overflow: hidden;
-  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: nowrap;
 }
-.d2h-file-collapse::after {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: transparent;
+.d2h-file-collapse:hover { border-color: var(--active); color: var(--text); }
+.d2h-file-collapse::before {
+  content: '';
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.75;
 }
-.d2h-file-wrapper.file-viewed .d2h-file-collapse::after {
-  background: var(--active);
+.d2h-file-collapse-input { display: none; }
+.d2h-file-wrapper.file-viewed .d2h-file-collapse {
+  color: #6ab04c;
+  border-color: color-mix(in srgb, #6ab04c 55%, transparent);
+  background: color-mix(in srgb, #6ab04c 16%, transparent);
 }
-.d2h-file-collapse-input {
-  display: none;
+.d2h-file-wrapper.file-viewed .d2h-file-collapse:hover { border-color: #6ab04c; color: #6ab04c; }
+.d2h-file-wrapper.file-viewed .d2h-file-collapse::before {
+  content: '✓';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #6ab04c;
+  background: #6ab04c;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 1;
 }
 .tree { display: grid; gap: 1px; font-size: 11.5px; font-family: Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .tree-dir { display: grid; gap: 1px; }
@@ -1802,10 +1913,10 @@ summary.tree-focus { background: var(--bg); }
 .diffstat { display: flex; gap: 6px; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .diffstat .adds { color: #6ab04c; }
 .diffstat .dels { color: #cf6679; }
-.file-link.viewed .status::after { content: '✓'; margin-left: 4px; color: #6ab04c; font-weight: 700; }
 .status {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 16px;
   height: 16px;
   border-radius: 4px;
@@ -1816,6 +1927,9 @@ summary.tree-focus { background: var(--bg); }
   background: var(--line);
   color: var(--muted);
 }
+/* Viewed: dim the row and collapse the status chip into one green check (no stacked glyph). */
+.file-link.viewed .status { font-size: 0; background: color-mix(in srgb, #6ab04c 24%, transparent); color: #6ab04c; }
+.file-link.viewed .status::after { content: '✓'; font-size: 10px; font-weight: 700; line-height: 1; }
 .status-added { background: var(--add); color: #1a7f37; }
 .status-deleted { background: var(--del); color: #cf222e; }
 .status-renamed { background: #fff8c5; color: #9a6700; }
@@ -1867,9 +1981,6 @@ h1 { margin: 0; font-size: 18px; }
 .empty { padding: 24px; color: var(--muted); }
 .source-viewer { min-height: 100vh; }
 .source-toolbar { margin-bottom: 0; }
-.source-viewed-toggle.is-viewed { border-color: #6ab04c; color: #6ab04c; }
-.source-viewed-toggle[hidden] { display: none; }
-.source-viewed-toggle { caret-color: transparent; -webkit-user-select: none; user-select: none; }
 .source-file-meta {
   display: flex;
   flex: 1;
@@ -2215,7 +2326,6 @@ const httpRequestsByPath = new Map();
 const httpVarsByPath = new Map();
 const sourceByPath = new Map(sourceFiles.map((file) => [file.path, file]));
 const fileSignatureByPath = new Map(fileStates.map((file) => [file.path, file.signature]));
-const searchInput = document.getElementById('review-search');
 const reviewMeta = document.getElementById('review-meta');
 const watchEnabled = reviewMeta?.dataset.watch === 'true';
 const currentSignature = reviewMeta?.dataset.signature || '';
@@ -2229,6 +2339,7 @@ const quickModeLabel = document.getElementById('quick-open-mode');
 let current = -1;
 let checkingForUpdates = false;
 let lastShiftAt = 0;
+let lastShiftSide = 0;
 let quickMode = 'all';
 let quickItems = [];
 let quickActive = 0;
@@ -2291,7 +2402,7 @@ function prepareViewedControls() {
     const toggle = wrapper.querySelector('.d2h-file-collapse');
     const input = toggle?.querySelector('input');
     if (!fileName || !toggle || !input) return;
-    toggle.title = 'Mark viewed';
+    toggle.title = 'Toggle viewed (<)';
     input.tabIndex = -1;
     toggle.addEventListener('click', (event) => {
       event.preventDefault();
@@ -2358,25 +2469,10 @@ function applyViewedState() {
     const checkbox = wrapper.querySelector('.d2h-file-collapse-input');
     if (checkbox) checkbox.checked = viewed;
   });
+  // Viewed is a diff-review concept: only the Changes list shows it, not the Files/source tree.
   links.forEach((link) => {
     link.classList.toggle('viewed', isFileViewed(link.dataset.file || ''));
   });
-  sourceLinks.forEach((link) => {
-    link.classList.toggle('viewed', isFileViewed(link.dataset.sourceFile || ''));
-  });
-  refreshSourceViewedToggle();
-}
-
-function refreshSourceViewedToggle() {
-  const toggle = document.getElementById('source-viewed-toggle');
-  if (!toggle) return;
-  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
-  const known = Boolean(path && currentFileSignature(path));
-  toggle.hidden = !known;
-  const viewed = known && isFileViewed(path);
-  toggle.classList.toggle('is-viewed', viewed);
-  toggle.setAttribute('aria-pressed', viewed ? 'true' : 'false');
-  toggle.textContent = viewed ? '✓ Viewed' : 'Viewed';
 }
 
 let activeDiffRow = null;
@@ -2393,10 +2489,12 @@ function firstCodeRowOfHunk(hunkRow) {
   return firstRow || hunkRow;
 }
 
-// First row in a hunk that is an actual change (add/del). The .hunk marker sits on the OLD side,
-// and diff2html does NOT repeat the @@ text on the NEW side (so there is no .hunk-peer to scan).
-// The two side tables ARE positionally aligned row-for-row, so walk the hunk by index and prefer
-// the OPPOSITE side, where additions live — landing F7 on the added line, not the leading context.
+// First row in a hunk to land the caret on. F7 should track the NEW (right) file, so prefer the
+// first change on the new side anywhere in the hunk (additions / modifications) and only fall back
+// to the old side for a pure-deletion hunk that has nothing on the new side. The .hunk marker sits
+// on the OLD side and the two side tables are positionally aligned row-for-row, so the new-side row
+// at the same index is the counterpart. Without this, a hunk that begins with deletions lands the
+// caret on the old-side deletion instead of the added lines below it.
 function isChangeCodeRow(row) {
   return !!(row && isDiffCodeRow(row) && row.querySelector('.d2h-ins, .d2h-del, ins, del'));
 }
@@ -2405,15 +2503,17 @@ function firstChangeRowForCaret(hunkRow) {
   const sides = wrapper ? wrapper.querySelectorAll('.d2h-file-side-diff') : [];
   const hunkSideEl = hunkRow.closest('.d2h-file-side-diff');
   if (sides.length >= 2 && hunkSideEl) {
-    const hunkRows = Array.from(hunkSideEl.querySelectorAll('tr'));
-    const otherEl = hunkSideEl === sides[0] ? sides[1] : sides[0];
+    const hunkRows = Array.from(hunkSideEl.querySelectorAll('tr')); // old side (carries the .hunk marker)
+    const otherEl = hunkSideEl === sides[0] ? sides[1] : sides[0];   // new side
     const otherRows = Array.from(otherEl.querySelectorAll('tr'));
+    let fallbackOld = null;
     for (let i = hunkRows.indexOf(hunkRow) + 1; i < hunkRows.length; i++) {
       const hr = hunkRows[i];
       if (hr.classList.contains('hunk') || hr.classList.contains('hunk-peer')) break;
-      if (isChangeCodeRow(otherRows[i])) return otherRows[i];
-      if (isChangeCodeRow(hr)) return hr;
+      if (isChangeCodeRow(otherRows[i])) return otherRows[i]; // first new-side change wins (track the new file)
+      if (fallbackOld === null && isChangeCodeRow(hr)) fallbackOld = hr; // remember the first old-side change
     }
+    if (fallbackOld) return fallbackOld; // pure-deletion hunk: nothing added, so land on the deletion
   }
   return firstCodeRowOfHunk(hunkRow);
 }
@@ -2487,15 +2587,38 @@ function showOnlyFile(fileName) {
   ensureDiffCursor();
 }
 
+// The hunk the diff caret currently sits in. Arrow keys move the caret without touching the active
+// index (the F7 anchor), so navigation must read the caret's real position -- otherwise pressing F7
+// after arrowing to the bottom of a file re-treads hunks already passed instead of going to the next file.
+function hunkIndexAtCaret() {
+  if (!diffCursor) return -1;
+  const wrapper = diffWrapperByPath(diffCursor.path);
+  if (!wrapper) return -1;
+  const caretRow = diffRowAt(wrapper, diffCursor.side, diffCursor.rowIndex);
+  const sideEl = caretRow ? caretRow.closest('.d2h-file-side-diff') : null;
+  if (!sideEl) return -1;
+  let found = -1;
+  // @@ markers on the caret's side carry data-hunk-index; the nearest one at or above the caret wins.
+  sideEl.querySelectorAll('[data-hunk-index]').forEach((marker) => {
+    if (marker === caretRow || (caretRow.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_PRECEDING)) {
+      found = Number(marker.dataset.hunkIndex);
+    }
+  });
+  return found;
+}
+
 function next(delta) {
   if (hunks.length === 0) return;
-  let idx = current < 0 ? initialHunkForNavigation(delta) : current + delta;
+  // Step relative to where the caret actually is, so the last change of a file leads into the next file.
+  const caretHunk = hunkIndexAtCaret();
+  const base = caretHunk >= 0 ? caretHunk : current;
+  let idx = base < 0 ? initialHunkForNavigation(delta) : base + delta;
   for (let step = 0; step < hunks.length; step++) {
     const norm = ((idx % hunks.length) + hunks.length) % hunks.length;
     if (!isFileViewed(hunks[norm].dataset.file || '')) { setActive(norm); return; }
     idx += delta;
   }
-  setActive((((current < 0 ? 0 : current + delta) % hunks.length) + hunks.length) % hunks.length);
+  // Every changed file is marked viewed — nothing left to review, so F7/[/] stay put.
 }
 
 function initialHunkForNavigation(delta) {
@@ -2882,13 +3005,21 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Shift' && !event.repeat) {
     const now = performance.now();
-    if (now - lastShiftAt < 1000) {
+    // event.location: 1 = left Shift, 2 = right Shift, 0 = unspecified.
+    // Require the SAME physical side twice (left+right never counts) within a
+    // tight 300ms window so quick-open doesn't fire on accidental or mixed
+    // Shift presses. The side !== 0 guard keeps an unknown location from ever
+    // matching itself and triggering.
+    const side = event.location;
+    if (side !== 0 && side === lastShiftSide && now - lastShiftAt < 300) {
       event.preventDefault();
       lastShiftAt = 0;
+      lastShiftSide = 0;
       openQuickOpen('all');
       return;
     }
     lastShiftAt = now;
+    lastShiftSide = side;
   }
 
   if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
@@ -3016,18 +3147,8 @@ document.querySelectorAll('.tab').forEach((button) => {
 });
 
 document.getElementById('back-to-diff')?.addEventListener('click', () => showDiffView(true));
-document.getElementById('source-viewed-toggle')?.addEventListener('click', () => {
-  const path = document.getElementById('source-viewer')?.dataset.openPath || '';
-  if (path) setFileViewed(path, !isFileViewed(path));
-});
 document.getElementById('source-body')?.addEventListener('click', handleSourceClick);
 document.addEventListener('copy', handleSourceCopy);
-
-searchInput?.addEventListener('input', () => {
-  filterNavigation(searchInput.value);
-  const openPath = document.getElementById('source-viewer')?.dataset.openPath;
-  if (openPath) openSourceFile(openPath, false);
-});
 
 populateHttpEnvSelect();
 const restored = restoreUiState();
@@ -3659,10 +3780,8 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onMergedView === 'function
 }
 
 (function checkForUpdate() {
-  try { if (sessionStorage.getItem('monacori-update-checked')) return; } catch (e) {}
   var current = window.__MONACORI_VERSION__ || '';
-  if (!current || typeof fetch !== 'function') return;
-  try { sessionStorage.setItem('monacori-update-checked', '1'); } catch (e) {}
+  if (!current) return;
   var isNewer = function (a, b) {
     var pa = String(a).split('.'), pb = String(b).split('.');
     for (var i = 0; i < 3; i++) {
@@ -3672,16 +3791,54 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onMergedView === 'function
     }
     return false;
   };
+  var apply = function (latest) {
+    if (!latest) return;
+    var status = document.getElementById('app-info-status');
+    if (isNewer(latest, current)) {
+      var flag = document.getElementById('app-update-flag');
+      if (flag) flag.classList.remove('hidden');
+      if (status) { status.textContent = 'Update available: v' + latest; status.classList.add('has-update'); }
+    } else if (status) {
+      status.textContent = 'Up to date (v' + current + ')';
+    }
+  };
+  // Cache the npm result for the session so watch-mode reloads reuse it instead of refetching.
+  var cached = '';
+  try { cached = sessionStorage.getItem('monacori-update-latest') || ''; } catch (e) {}
+  if (cached) { apply(cached); return; }
+  if (typeof fetch !== 'function') return;
   fetch('https://registry.npmjs.org/@happy-nut/monacori/latest', { cache: 'no-store' })
     .then(function (res) { return res && res.ok ? res.json() : null; })
     .then(function (data) {
-      if (!data || !data.version || !isNewer(data.version, current)) return;
-      var badge = document.getElementById('update-badge');
-      if (!badge) return;
-      badge.textContent = 'Update available: v' + data.version;
-      badge.classList.remove('hidden');
+      if (!data || !data.version) return;
+      try { sessionStorage.setItem('monacori-update-latest', data.version); } catch (e) {}
+      apply(data.version);
     })
     .catch(function () {});
+})();
+
+(function setupAppInfo() {
+  var btn = document.getElementById('app-info-btn');
+  var panel = document.getElementById('app-info');
+  var flag = document.getElementById('app-update-flag');
+  var copyBtn = document.getElementById('app-info-copy');
+  if (!btn || !panel) return;
+  var setOpen = function (open) { panel.classList.toggle('hidden', !open); };
+  btn.addEventListener('click', function (e) { e.stopPropagation(); setOpen(panel.classList.contains('hidden')); });
+  if (flag) flag.addEventListener('click', function (e) { e.stopPropagation(); setOpen(true); });
+  if (copyBtn) copyBtn.addEventListener('click', function () {
+    var cmd = 'npm i -g @happy-nut/monacori';
+    var done = function () { copyBtn.textContent = 'Copied'; setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(cmd).then(done).catch(function () {}); }
+  });
+  document.addEventListener('click', function (e) {
+    if (panel.classList.contains('hidden')) return;
+    if (panel.contains(e.target) || btn.contains(e.target)) return;
+    setOpen(false);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !panel.classList.contains('hidden')) setOpen(false);
+  });
 })();
 
 function setTab(name) {
@@ -3716,7 +3873,6 @@ function saveUiState() {
   const activeTab = document.querySelector('.tab.active')?.dataset.tab || 'changes';
   const sourcePath = document.getElementById('source-viewer')?.dataset.openPath || '';
   sessionStorage.setItem(uiStateKey, JSON.stringify({
-    search: searchInput?.value || '',
     tab: activeTab,
     view: document.getElementById('source-viewer')?.classList.contains('hidden') ? 'diff' : 'source',
     sourcePath,
@@ -3729,10 +3885,6 @@ function restoreUiState() {
   if (!raw) return false;
   try {
     const state = JSON.parse(raw);
-    if (searchInput && state.search) {
-      searchInput.value = state.search;
-      filterNavigation(state.search);
-    }
     if (state.view === 'diff') {
       const match = String(state.hash || location.hash || '').match(/^#hunk-(\\d+)$/);
       setActive(match ? Number(match[1]) : current >= 0 ? current : 0, false);
@@ -3947,21 +4099,56 @@ function setSourceCursor(path, lineIndex, column, shouldReveal = false, targetLi
   const lines = file.content.split(/\r?\n/);
   const boundedLine = Math.max(0, Math.min(lineIndex, Math.max(lines.length - 1, 0)));
   const boundedColumn = Math.max(0, Math.min(column, (lines[boundedLine] || '').length));
-  viewerCursor = {
-    path,
-    lineIndex: boundedLine,
-    column: boundedColumn,
-    targetLine,
-  };
 
+  const prev = viewerCursor;
   const viewer = document.getElementById('source-viewer');
-  const shouldSwitch = !viewer || viewer.dataset.openPath !== path || viewer.classList.contains('hidden');
-  openSourceFile(path, shouldSwitch);
+  // Fast path: the file is already on screen and only the caret moved. Re-rendering the whole
+  // file on every keystroke blocks the main thread on large files, so patch just the previous
+  // and new caret lines in place instead.
+  const sameFileOpen = Boolean(viewer && viewer.dataset.openPath === path && !viewer.classList.contains('hidden')
+    && prev && prev.path === path && !isHttpFile(path));
+
+  viewerCursor = { path, lineIndex: boundedLine, column: boundedColumn, targetLine };
+
+  if (sameFileOpen) {
+    updateSourceCaret(prev, lines, file.language || 'text');
+  } else {
+    const shouldSwitch = !viewer || viewer.dataset.openPath !== path || viewer.classList.contains('hidden');
+    openSourceFile(path, shouldSwitch);
+  }
   if (shouldReveal) {
     requestAnimationFrame(() => {
       document.querySelector('.source-row.cursor-line')?.scrollIntoView({ block: 'center' });
     });
   }
+}
+
+// Move the caret by patching only the affected line cells, never the whole <table>. This keeps
+// large files responsive (no full re-highlight per keystroke) and, because the new caret line is
+// rebuilt with a fresh .code-cursor span, restarts the blink animation so the caret is solid the
+// instant it moves and only resumes blinking when idle.
+function updateSourceCaret(prev, lines, language) {
+  const body = document.getElementById('source-body');
+  if (!body) return;
+  const rowFor = (idx) => body.querySelector('.source-row[data-line-index="' + idx + '"]');
+  // Restore the line the caret left: drop the caret span, re-highlight the full line.
+  if (prev && prev.lineIndex !== viewerCursor.lineIndex) {
+    const prevRow = rowFor(prev.lineIndex);
+    if (prevRow) {
+      prevRow.classList.remove('cursor-line');
+      const prevCell = prevRow.querySelector('.source-code');
+      if (prevCell) prevCell.innerHTML = highlightLine(lines[prev.lineIndex] || '', language);
+    }
+  }
+  // Reconcile the go-to-definition highlight (set only on symbol jumps, cleared on plain moves).
+  body.querySelectorAll('.source-row.symbol-target').forEach((r) => r.classList.remove('symbol-target'));
+  if (viewerCursor.targetLine >= 0) rowFor(viewerCursor.targetLine)?.classList.add('symbol-target');
+  // Rebuild the new caret line with the caret span.
+  const row = rowFor(viewerCursor.lineIndex);
+  if (!row) { openSourceFile(viewerCursor.path, false); return; } // line not in the DOM — fall back to a full render
+  row.classList.add('cursor-line');
+  const cell = row.querySelector('.source-code');
+  if (cell) cell.innerHTML = renderLineWithCursor(lines[viewerCursor.lineIndex] || '', language, viewerCursor.column);
 }
 
 function openSourceAt(path, lineIndex, column) {
@@ -4089,14 +4276,26 @@ function moveSourceCursor(dLine, dColumn, extend) {
 }
 // Word boundary in text from col in direction dir (+1 next, -1 prev): skip non-word, then word.
 function nextWordBoundary(text, col, dir) {
-  var isWord = function (ch) { return /[A-Za-z0-9_$]/.test(ch); };
+  // Classify like vim's word motions: 0 = whitespace, 1 = word char, 2 = punctuation.
+  // A run of word chars and a run of punctuation are each their own "word", so the
+  // caret lands on the START of the next word/punctuation run (vim 'w'), or the start
+  // of the previous one (vim 'b') -- never stranded in the middle of whitespace.
+  var classOf = function (ch) {
+    if (ch === '' || /\s/.test(ch)) return 0;
+    if (/[A-Za-z0-9_$]/.test(ch)) return 1;
+    return 2;
+  };
   var i = col;
   if (dir > 0) {
-    while (i < text.length && !isWord(text.charAt(i))) i++;
-    while (i < text.length && isWord(text.charAt(i))) i++;
+    var cf = classOf(text.charAt(i));
+    if (cf !== 0) { while (i < text.length && classOf(text.charAt(i)) === cf) i++; }
+    while (i < text.length && classOf(text.charAt(i)) === 0) i++;
   } else {
-    while (i > 0 && !isWord(text.charAt(i - 1))) i--;
-    while (i > 0 && isWord(text.charAt(i - 1))) i--;
+    i--;
+    while (i > 0 && classOf(text.charAt(i)) === 0) i--;
+    var cb = classOf(text.charAt(i));
+    while (i > 0 && classOf(text.charAt(i - 1)) === cb) i--;
+    if (i < 0) i = 0;
   }
   return i;
 }
@@ -4108,11 +4307,14 @@ function moveSourceWord(dir, extend) {
   var line = viewerCursor.lineIndex, col = viewerCursor.column;
   var text = lines[line] || '';
   if (dir > 0) {
-    if (col >= text.length) { if (line < lines.length - 1) { line += 1; col = 0; } }
-    else col = nextWordBoundary(text, col, 1);
+    var fwd = nextWordBoundary(text, col, 1);
+    if (fwd < text.length || line >= lines.length - 1) { col = fwd; }
+    else { line += 1; var nt = lines[line] || ''; var m = nt.search(/\S/); col = m < 0 ? 0 : m; }
   } else {
-    if (col <= 0) { if (line > 0) { line -= 1; col = (lines[line] || '').length; } }
-    else col = nextWordBoundary(text, col, -1);
+    var back = nextWordBoundary(text, col, -1);
+    if (back < col && /\S/.test(text.charAt(back))) { col = back; }
+    else if (line > 0) { line -= 1; var pt = lines[line] || ''; col = pt.length > 0 ? nextWordBoundary(pt, pt.length, -1) : 0; }
+    else { col = back; }
   }
   if (extend) { if (!selectionAnchor) selectionAnchor = { lineIndex: viewerCursor.lineIndex, column: viewerCursor.column }; }
   else selectionAnchor = null;
@@ -4224,7 +4426,6 @@ function openSourceFile(path, shouldSwitch = true) {
     file.embedded ? 'searchable' : file.skippedReason || 'not embedded',
   ].join(' | ');
   document.getElementById('source-meta').textContent = meta;
-  refreshSourceViewedToggle();
   const body = document.getElementById('source-body');
   if (!file.embedded) {
     body.className = 'source-body empty';
@@ -4242,7 +4443,7 @@ function openSourceFile(path, shouldSwitch = true) {
     body.innerHTML = renderHttpTable(file);
     if (httpEnvSelect) httpEnvSelect.classList.toggle('hidden', httpEnvNames.length === 0);
   } else {
-    body.innerHTML = renderSourceTable(file, searchInput?.value || '');
+    body.innerHTML = renderSourceTable(file, '');
     if (httpEnvSelect) httpEnvSelect.classList.add('hidden');
   }
   renderSourceComments();
