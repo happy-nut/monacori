@@ -631,10 +631,12 @@ export function buildDiffReview(input: {
   const diffHtml = renderDiff2Html(diffText);
   const totalLines = files.reduce((sum, file) => sum + file.hunks.reduce((t, h) => t + h.lines.length, 0), 0);
   // lazy-LOAD (Phase 2) serves each file body + source on demand instead of embedding them; it implies
-  // lazy (shells). Driven by the caller (serve/Electron pass lazyLoad:true; the standalone file writer
-  // leaves it off since it has no server to fetch from). Big repos still lazy-materialize when embedded.
-  const lazyLoad = input.lazyLoad ?? false;
-  const lazy = lazyLoad || (input.lazy ?? shouldLazyRender(files.length, totalLines));
+  // lazy (shells). Gated by size: only big reviews lazy-LOAD — small ones embed (no IPC round-trips, no
+  // "Loading source…" flash). The transport opts in (serve/Electron pass lazyLoad:true); standalone has
+  // no server. A big standalone review still lazy-materializes from embedded islands (Phase 1).
+  const big = shouldLazyRender(files.length, totalLines);
+  const lazyLoad = (input.lazyLoad ?? false) && big;
+  const lazy = lazyLoad || (input.lazy ?? big);
   const diffSplit = lazy ? splitDiffForLazy(diffHtml, files) : { container: diffHtml, islands: "", bodies: [] as string[] };
   const signature = createHash("sha1")
     .update(diffText)
@@ -1095,13 +1097,14 @@ function renderDiffHtml(input: {
     '<section id="diff-view" class="hidden">',
     '<div class="toolbar">',
     '<div class="breadcrumb" id="diff-breadcrumb"></div>',
-    `<div class="review-status"><span>${input.files.length} files</span><span>${totalHunks} hunks</span>${input.ignoreWhitespace ? '<span class="ws-ignored" title="Whitespace ignored — Cmd/Ctrl+Shift+W">ws ignored</span>' : ""}<span>${embeddedFiles}/${input.sourceFiles.length} indexed</span><span class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "watching" : escapeHtml(input.generatedAt ?? new Date().toISOString())}</span></div>`,
+    `<div class="review-status"><span>${input.files.length} files</span><span>${totalHunks} hunks</span>${input.ignoreWhitespace ? '<span class="ws-ignored" title="Whitespace ignored — Cmd/Ctrl+Shift+W">ws ignored</span>' : ""}<span class="index-status" id="index-status" title="Go-to-definition index">${embeddedFiles}/${input.sourceFiles.length} indexed</span><span class="index-progress hidden" id="index-progress" aria-hidden="true"><span class="index-progress-bar"></span></span><span class="live-status ${input.watch ? "watching" : ""}" id="live-status">${input.watch ? "watching" : escapeHtml(input.generatedAt ?? new Date().toISOString())}</span></div>`,
+    '<button type="button" id="diff-viewed-toggle" class="diff-viewed-toggle" aria-pressed="false" title="Toggle viewed (<)" hidden>Viewed</button>',
     "</div>",
     `<div id="diff2html-container" class="diff2html-container">${input.diffHtml || '<div class="empty">No diff to review.</div>'}</div>`,
     "</section>",
     '<section id="source-viewer" class="source-viewer">',
     '<div class="toolbar source-toolbar">',
-    '<div class="source-file-meta"><span id="source-title">Source</span><span id="source-meta">Select a file from the Files tab.</span></div>',
+    '<div class="source-file-meta"><span id="source-type-icon" class="source-type-icon" aria-hidden="true"></span><span id="source-title">Source</span><span id="source-meta">Select a file from the Files tab.</span></div>',
     '<select id="http-env-select" class="http-env-select hidden" title="HTTP Client environment" aria-label="HTTP environment"></select>',
     '<button type="button" id="back-to-diff" class="plain-button">Diff</button>',
     "</div>",
@@ -1158,7 +1161,8 @@ function renderDiffTree(files: DiffFile[]): string {
     const name = slash >= 0 ? file.displayPath.slice(slash + 1) : file.displayPath;
     const dir = slash > 0 ? file.displayPath.slice(0, slash) : "";
     return [
-      `<a class="file-link change-row" href="#file-${fileIndex}" data-hunk="${firstHunk}" data-file="${escapeAttr(file.displayPath)}">`,
+      `<a class="file-link change-row" href="#file-${fileIndex}" data-hunk="${firstHunk}" data-file="${escapeAttr(file.displayPath)}" title="${escapeAttr(file.displayPath + " — " + file.status)}">`,
+      fileTypeIcon(file.displayPath),
       `<span class="status status-${escapeAttr(file.status)}">${escapeHtml(file.status)}</span>`,
       `<span class="change-name"><span class="path" title="${escapeAttr(file.displayPath)}">${escapeHtml(name)}</span>${dir ? `<span class="change-dir">${escapeHtml(dir)}</span>` : ""}</span>`,
       `<span class="diffstat">${adds ? `<span class="adds">+${adds}</span>` : ""}${dels ? `<span class="dels">−${dels}</span>` : ""}</span>`,
@@ -1212,18 +1216,83 @@ function renderSourceChildren(node: SourceTreeNode, depth: number): string {
     .join("\n");
 }
 
+function fileTypeColor(ext: string): string {
+  const map: Record<string, string> = {
+    ts: "#3178c6", tsx: "#3178c6", mts: "#3178c6", cts: "#3178c6", "d.ts": "#3178c6",
+    js: "#e8bf6a", jsx: "#e8bf6a", mjs: "#e8bf6a", cjs: "#e8bf6a",
+    json: "#cbcb41", jsonc: "#cbcb41",
+    yaml: "#cb9b41", yml: "#cb9b41", toml: "#cb9b41", ini: "#cb9b41", env: "#cb9b41", conf: "#cb9b41",
+    lock: "#9aa0a6", gitignore: "#9aa0a6", npmrc: "#9aa0a6", editorconfig: "#9aa0a6",
+    html: "#e44d26", htm: "#e44d26", vue: "#41b883", svelte: "#ff3e00", xml: "#e8bf6a", svg: "#e8bf6a",
+    css: "#42a5f5", scss: "#c6538c", sass: "#c6538c", less: "#2a6db5",
+    md: "#9aa0a6", mdx: "#9aa0a6", txt: "#9aa0a6", rst: "#9aa0a6",
+    go: "#00add8", rs: "#dea584", py: "#3572a5", rb: "#cc342d", java: "#b07219",
+    kt: "#a97bff", kts: "#a97bff", php: "#8892bf", swift: "#ff8a00", cs: "#9b59b6",
+    c: "#7aa6da", h: "#7aa6da", cpp: "#f34b7d", hpp: "#f34b7d",
+    sh: "#89e051", bash: "#89e051", zsh: "#89e051",
+    png: "#26a269", jpg: "#26a269", jpeg: "#26a269", gif: "#26a269", webp: "#26a269", ico: "#26a269", bmp: "#26a269",
+  };
+  return map[ext] || "#7f868d";
+}
+
+// Small file-type glyph (a tinted folded-corner document) for the Files tree, in place of a text badge.
+function fileTypeCategory(ext: string): string {
+  const sets: Record<string, string[]> = {
+    code: ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "go", "rs", "py", "rb", "java", "kt", "kts", "php", "c", "h", "cpp", "hpp", "cs", "swift", "sh", "bash", "zsh"],
+    data: ["json", "jsonc", "yaml", "yml", "toml", "ini", "env", "conf", "lock", "xml"],
+    markup: ["html", "htm", "vue", "svelte"],
+    style: ["css", "scss", "sass", "less"],
+    doc: ["md", "mdx", "txt", "rst"],
+    image: ["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "svg"],
+  };
+  for (const cat of Object.keys(sets)) {
+    if (sets[cat].includes(ext)) return cat;
+  }
+  return "generic";
+}
+
+// A small, distinct glyph per file-type category, tinted with the language color, for the file lists.
+function fileTypeIcon(path: string): string {
+  const base = (path.split("/").pop() || path);
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : (base.startsWith(".") ? base.slice(1).toLowerCase() : "");
+  const c = fileTypeColor(ext);
+  const stroke = `fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"`;
+  let inner: string;
+  switch (fileTypeCategory(ext)) {
+    case "code": // < >
+      inner = `<path d="M6 4.6 3 8l3 3.4M10 4.6 13 8l-3 3.4" ${stroke}/>`;
+      break;
+    case "markup": // </>
+      inner = `<path d="M5.6 4.6 2.8 8l2.8 3.4M10.4 4.6 13.2 8l-2.8 3.4M9.3 3.6 6.7 12.4" ${stroke}/>`;
+      break;
+    case "data": // { }
+      inner = `<path d="M7.4 3.6C6.3 3.6 6.3 4.8 6.3 5.8 6.3 6.8 5.6 7.4 4.8 7.4 5.6 7.4 6.3 8 6.3 9 6.3 10 6.3 11.4 7.4 11.4M8.6 3.6C9.7 3.6 9.7 4.8 9.7 5.8 9.7 6.8 10.4 7.4 11.2 7.4 10.4 7.4 9.7 8 9.7 9 9.7 10 9.7 11.4 8.6 11.4" fill="none" stroke="${c}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>`;
+      break;
+    case "style": // #
+      inner = `<path d="M6.4 4 5.2 12M10.2 4 9 12M3.9 6.6 12 6.6M3.4 9.4 11.5 9.4" ${stroke}/>`;
+      break;
+    case "doc": // page with text lines
+      inner = `<path d="M4.5 2.5h4.4L11.5 5v8a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z" fill="${c}" fill-opacity="0.16" stroke="${c}" stroke-width="1.2" stroke-linejoin="round"/><path d="M8.8 2.6V5h2.6M5.8 8h4M5.8 10.2h2.7" fill="none" stroke="${c}" stroke-width="1.2" stroke-linecap="round"/>`;
+      break;
+    case "image": // framed picture
+      inner = `<rect x="3" y="3.6" width="10" height="8.8" rx="1.4" fill="${c}" fill-opacity="0.14" stroke="${c}" stroke-width="1.2"/><circle cx="6" cy="6.4" r="1.05" fill="none" stroke="${c}" stroke-width="1.1"/><path d="M3.6 11.8 6.7 8.4l2 2.1 1.9-2.2 2.4 2.7" fill="none" stroke="${c}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+      break;
+    default: // folded-corner document
+      inner = `<path d="M4 2.25a1 1 0 0 1 1-1h4.3L12.5 4.7v9.05a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" fill="${c}" fill-opacity="0.2" stroke="${c}" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.2 1.4v2.8a1 1 0 0 0 1 1h2.6" fill="none" stroke="${c}" stroke-width="1.1" stroke-linejoin="round"/>`;
+  }
+  return `<svg class="ftype" viewBox="0 0 16 16" aria-hidden="true">${inner}</svg>`;
+}
+
 function renderSourceNode(node: SourceTreeNode, depth: number): string {
   if (node.file) {
     const file = node.file;
-    const flags = [
-      file.changed ? "changed" : "",
-      file.embedded ? "" : "not embedded",
-    ].filter(Boolean).join(" | ");
+    const classes = ["file-link", "source-link", "tree-file", file.embedded ? "" : "not-embedded"].filter(Boolean).join(" ");
+    const tip = file.path + (file.embedded ? "" : " — not embedded");
     return [
-      `<button type="button" class="file-link source-link tree-file" data-source-file="${escapeAttr(file.path)}" style="--depth:${depth}">`,
-      `<span class="status status-${file.changed ? "modified" : "source"}">${file.changed ? "diff" : "file"}</span>`,
-      `<span class="path" title="${escapeAttr(file.path)}">${escapeHtml(node.name)}</span>`,
-      `<span class="count">${escapeHtml(flags || file.language)}</span>`,
+      `<button type="button" class="${classes}" data-source-file="${escapeAttr(file.path)}" style="--depth:${depth}" title="${escapeAttr(tip)}">`,
+      fileTypeIcon(file.path),
+      `<span class="path">${escapeHtml(node.name)}</span>`,
       "</button>",
     ].join("");
   }
@@ -1238,7 +1307,7 @@ function renderSourceNode(node: SourceTreeNode, depth: number): string {
   }
 
   return [
-    `<details class="tree-dir source-dir" open style="--depth:${depth}">`,
+    `<details class="tree-dir source-dir" data-dir="${escapeAttr(labelNode.path)}" style="--depth:${depth}">`,
     `<summary><span class="folder-icon">v</span><span class="path">${escapeHtml(names.join("/"))}</span></summary>`,
     renderSourceChildren(labelNode, depth + 1),
     "</details>",
@@ -1814,11 +1883,52 @@ body {
   border-radius: 0;
   background: var(--panel);
 }
-.d2h-file-header {
-  border-bottom: 1px solid var(--border);
-  background: var(--line);
-  color: var(--text);
-  font: 12px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+/* The per-file header is merged into the sticky toolbar (path + status + Viewed) to save vertical space. */
+.d2h-file-header { display: none; }
+.diff-viewed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.diff-viewed-toggle[hidden] { display: none; }
+.diff-viewed-toggle:hover { border-color: var(--active); color: var(--text); }
+.diff-viewed-toggle::before {
+  content: "";
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.75;
+}
+.diff-viewed-toggle.is-viewed {
+  color: #6ab04c;
+  border-color: color-mix(in srgb, #6ab04c 55%, transparent);
+  background: color-mix(in srgb, #6ab04c 16%, transparent);
+}
+.diff-viewed-toggle.is-viewed:hover { border-color: #6ab04c; color: #6ab04c; }
+.diff-viewed-toggle.is-viewed::before {
+  content: "✓";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #6ab04c;
+  background: #6ab04c;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 1;
 }
 .d2h-file-wrapper.file-viewed {
   opacity: 0.68;
@@ -1843,8 +1953,10 @@ body {
 .d2h-code-side-linenumber, .d2h-code-linenumber {
   width: 58px;
   color: var(--muted);
-  background: var(--line);
-  border-color: var(--border);
+  /* diff2html absolutely-positions each line number; a distinct gutter background exposed the tiny
+     gaps between those boxes as horizontal "dividers", so keep the gutter transparent + borderless. */
+  background: transparent;
+  border: 0;
 }
 .d2h-code-side-line, .d2h-code-line {
   /* left pad must exceed the 58px absolutely-positioned line-number, else the +/- prefix renders behind it and looks clipped */
@@ -1914,6 +2026,9 @@ body {
 .d2h-diff-table tr.diff-active-row td { background: rgba(74, 136, 199, 0.16) !important; }
 .d2h-diff-table tr.diff-active-row td.d2h-code-side-linenumber { box-shadow: inset 2px 0 0 var(--active); }
 .review-status .ws-ignored { color: var(--token-tag); border: 1px solid color-mix(in srgb, var(--token-tag) 45%, transparent); border-radius: 999px; padding: 0 7px; }
+.index-progress { display: inline-flex; width: 54px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 30%, transparent); overflow: hidden; vertical-align: middle; }
+.index-progress.hidden { display: none; }
+.index-progress-bar { width: 0; height: 100%; background: var(--active); border-radius: 999px; transition: width 0.18s ease; }
 .d2h-file-collapse {
   display: inline-flex;
   align-items: center;
@@ -2156,7 +2271,13 @@ h1 { margin: 0; font-size: 18px; }
   padding: 2px 8px;
 }
 /* Review comments (questions / change-requests) — per-file sidebar count badges (no emoji) */
-.change-row, .source-link { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.change-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+.source-link { grid-template-columns: auto minmax(0, 1fr) auto; }
+.file-link .ftype { width: 15px; height: 15px; flex: none; display: block; }
+.source-link.not-embedded { opacity: 0.45; }
+.source-link.not-embedded:hover { opacity: 0.72; }
+.source-type-icon { display: inline-flex; align-items: center; flex: none; margin-right: 2px; }
+.source-type-icon .ftype { width: 16px; height: 16px; display: block; }
 .mc-file-badge { display: inline-flex; gap: 4px; align-items: center; }
 .mc-fb { font-size: 10px; line-height: 1; padding: 1px 6px; border-radius: 999px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid transparent; }
 .mc-fb-q { color: var(--token-number); background: color-mix(in srgb, var(--token-number) 16%, transparent); border-color: color-mix(in srgb, var(--token-number) 38%, transparent); }
@@ -2718,6 +2839,20 @@ function applyViewedState() {
   links.forEach((link) => {
     link.classList.toggle('viewed', isFileViewed(link.dataset.file || ''));
   });
+  updateDiffViewedToggle();
+}
+
+// The diff file header is merged into the toolbar; this reflects the active file's viewed state there.
+function updateDiffViewedToggle() {
+  var btn = document.getElementById('diff-viewed-toggle');
+  if (!btn) return;
+  var path = btn.dataset.file || '';
+  var known = Boolean(path && currentFileSignature(path));
+  btn.hidden = !known;
+  if (!known) return;
+  var viewed = isFileViewed(path);
+  btn.classList.toggle('is-viewed', viewed);
+  btn.setAttribute('aria-pressed', viewed ? 'true' : 'false');
 }
 
 let activeDiffRow = null;
@@ -2807,6 +2942,9 @@ function setActive(index, shouldScroll = true) {
   const idx = current;
   links.forEach((link) => link.classList.toggle('active', link.dataset.file === file));
   renderBreadcrumb(document.getElementById('diff-breadcrumb'), file);
+  var dvt = document.getElementById('diff-viewed-toggle');
+  if (dvt) dvt.dataset.file = file || '';
+  updateDiffViewedToggle();
   if (file) rememberRecent(file, 'change');
   history.replaceState(null, '', '#hunk-' + idx);
   // Row-dependent work waits for the file body (sync for eager/Phase 1, async for cold lazy-LOAD).
@@ -3139,6 +3277,36 @@ function focusOpenFileInTree() {
   focusTree(idx);
 }
 
+function treePageSize() {
+  var scroller = document.querySelector('.sidebar-scroll');
+  var h = scroller ? scroller.clientHeight : 320;
+  return Math.max(1, Math.floor(h / 20) - 1); // ~20px per tree row, minus one for overlap
+}
+function treeOpenKey() { return 'monacori-tree-open:' + location.pathname; }
+function loadTreeOpen() { try { return new Set(JSON.parse(sessionStorage.getItem(treeOpenKey()) || '[]')); } catch (e) { return new Set(); } }
+function saveTreeOpen(set) { try { sessionStorage.setItem(treeOpenKey(), JSON.stringify(Array.from(set))); } catch (e) {} }
+// Folders start collapsed. Restore the folders the user manually opened, plus reveal the open file's
+// path. Toggle listeners attach AFTER the initial state so the auto-revealed path is not mistaken for
+// a user-opened folder (keeping "collapsed by default" intact on the next load).
+function initSourceTreeFolds() {
+  var dirs = Array.prototype.slice.call(document.querySelectorAll('.source-dir'));
+  if (!dirs.length) return;
+  var saved = loadTreeOpen();
+  var openPath = (document.getElementById('source-viewer') && document.getElementById('source-viewer').dataset.openPath) || '';
+  dirs.forEach(function (d) {
+    var dir = d.dataset.dir || '';
+    var reveal = openPath && (openPath === dir || openPath.indexOf(dir + '/') === 0);
+    d.open = saved.has(dir) || !!reveal;
+  });
+  dirs.forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      var set = loadTreeOpen();
+      var dir = d.dataset.dir || '';
+      if (d.open) set.add(dir); else set.delete(dir);
+      saveTreeOpen(set);
+    });
+  });
+}
 function handleTreeKey(event) {
   const rows = treeRows();
   if (rows.length === 0) return false;
@@ -3147,6 +3315,8 @@ function handleTreeKey(event) {
   const isFolder = row && row.tagName === 'SUMMARY';
   if (event.key === 'ArrowDown') { event.preventDefault(); focusTree(treeFocusIndex + 1); return true; }
   if (event.key === 'ArrowUp') { event.preventDefault(); focusTree(treeFocusIndex - 1); return true; }
+  if (event.key === 'PageDown') { event.preventDefault(); focusTree(treeFocusIndex + treePageSize()); return true; }
+  if (event.key === 'PageUp') { event.preventDefault(); focusTree(treeFocusIndex - treePageSize()); return true; }
   if (event.key === 'Enter') {
     event.preventDefault();
     if (row && row.classList.contains('file-link')) { row.click(); clearTreeFocus(); }
@@ -3444,6 +3614,11 @@ document.querySelectorAll('.tab').forEach((button) => {
 });
 
 document.getElementById('back-to-diff')?.addEventListener('click', () => showDiffView(true));
+document.getElementById('diff-viewed-toggle')?.addEventListener('click', function () {
+  var btn = document.getElementById('diff-viewed-toggle');
+  var path = btn ? (btn.dataset.file || '') : '';
+  if (path) setFileViewed(path, !isFileViewed(path));
+});
 document.getElementById('source-body')?.addEventListener('click', handleSourceClick);
 document.addEventListener('copy', handleSourceCopy);
 
@@ -3455,6 +3630,7 @@ if (!restored) {
   if (initial) setActive(Number(initial[1]), false);
   else openDefaultSourceFile();
 }
+initSourceTreeFolds();
 if (watchEnabled) setInterval(checkForLiveUpdate, 1500);
 window.addEventListener('beforeunload', saveUiState);
 
@@ -4843,7 +5019,9 @@ function symbolIndexWorker() {
       /^\s*(?:(?:public|private|protected|internal|abstract|final|open|override|suspend|inline|operator|static|async)\s+)*(?:fun|def|fn|func)\s+([A-Za-z_$][A-Za-z0-9_$]*)/
     ];
     var index = new Map();
-    for (var fi = 0; fi < files.length; fi++) {
+    var total = files.length;
+    var step = Math.max(1, Math.floor(total / 20)); // ~20 progress ticks regardless of repo size
+    for (var fi = 0; fi < total; fi++) {
       var p = files[fi].path;
       var lines = String(files[fi].content || '').split(/\r?\n/);
       for (var li = 0; li < lines.length; li++) {
@@ -4858,8 +5036,9 @@ function symbolIndexWorker() {
           }
         }
       }
+      if ((fi + 1) % step === 0 && fi + 1 < total) self.postMessage({ done: fi + 1, total: total });
     }
-    self.postMessage(index);
+    self.postMessage({ index: index, total: total });
   };
 }
 function startSymbolIndex() {
@@ -4869,17 +5048,41 @@ function startSymbolIndex() {
     var url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
     var worker = new Worker(url);
     worker.onmessage = function (e) {
-      symbolIndex = e.data;
-      try { worker.terminate(); } catch (x) {}
-      try { URL.revokeObjectURL(url); } catch (x) {}
+      var msg = e.data;
+      if (msg && msg.index) { // final index
+        symbolIndex = msg.index;
+        setIndexProgress(msg.total, msg.total);
+        try { worker.terminate(); } catch (x) {}
+        try { URL.revokeObjectURL(url); } catch (x) {}
+      } else if (msg && typeof msg.done === 'number') { // progress tick
+        setIndexProgress(msg.done, msg.total);
+      }
     };
-    worker.onerror = function () { try { worker.terminate(); } catch (x) {} };
+    worker.onerror = function () { setIndexProgress(1, 1); try { worker.terminate(); } catch (x) {} };
     var payload = [];
     for (var i = 0; i < sourceFiles.length; i++) {
       if (sourceFiles[i].embedded) payload.push({ path: sourceFiles[i].path, content: sourceFiles[i].content });
     }
+    setIndexProgress(0, payload.length);
     worker.postMessage(payload);
   } catch (err) { /* Worker unavailable -> scan fallback remains in effect */ }
+}
+// Drive the go-to-definition indexing progress bar in the toolbar status. Hidden when done / not running.
+function setIndexProgress(done, total) {
+  var el = document.getElementById('index-status');
+  var bar = document.getElementById('index-progress');
+  if (!el) return;
+  if (!total || done >= total) {
+    el.textContent = (total || 0) + ' indexed';
+    if (bar) bar.classList.add('hidden');
+    return;
+  }
+  el.textContent = 'indexing ' + done + '/' + total + '…';
+  if (bar) {
+    bar.classList.remove('hidden');
+    var fill = bar.firstElementChild;
+    if (fill) fill.style.width = Math.round(done / total * 100) + '%';
+  }
 }
 function wordAtDiffCaret() {
   if (!diffCursor) return null;
@@ -4944,6 +5147,13 @@ function escapeRegExp(value) {
   return String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 }
 
+function setSourceTypeIcon(path) {
+  var holder = document.getElementById('source-type-icon');
+  if (!holder) return;
+  var link = sourceLinks.find(function (l) { return l.dataset.sourceFile === path; });
+  var icon = link ? link.querySelector('.ftype') : null;
+  holder.innerHTML = icon ? icon.outerHTML : '';
+}
 function openSourceFile(path, shouldSwitch = true) {
   const file = sourceByPath.get(path);
   if (!file) return;
@@ -4953,6 +5163,7 @@ function openSourceFile(path, shouldSwitch = true) {
     document.getElementById('source-viewer').dataset.openPath = path;
     sourceLinks.forEach((link) => link.classList.toggle('active', link.dataset.sourceFile === path));
     renderBreadcrumb(document.getElementById('source-title'), path);
+    setSourceTypeIcon(path);
     var lb = document.getElementById('source-body');
     lb.className = 'source-body empty';
     lb.textContent = 'Loading source…';
@@ -4963,6 +5174,7 @@ function openSourceFile(path, shouldSwitch = true) {
   document.getElementById('source-viewer').dataset.openPath = path;
   sourceLinks.forEach((link) => link.classList.toggle('active', link.dataset.sourceFile === path));
   renderBreadcrumb(document.getElementById('source-title'), path);
+  setSourceTypeIcon(path);
   const meta = [
     file.language || 'text',
     formatBytes(file.size || 0),
