@@ -141,13 +141,13 @@ app.whenReady().then(async () => {
   const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
   if (process.platform === "darwin") menuTemplate.push({ role: "appMenu" });
   menuTemplate.push({ role: "editMenu" });
-  // Claim Cmd/Ctrl+Shift+/ ("?") and Cmd/Ctrl+Shift+. (">") as menu accelerators so macOS does not
-  // swallow Cmd+? for its Help search; clicking routes to the renderer's merged comment views.
+  // Ctrl+Cmd+Shift+/ ("?") and Ctrl+Cmd+Shift+. (">") open the merged question / change-request views.
+  // ? and > are Shift+/ and Shift+. so Shift is part of the combo; Ctrl+Cmd avoids macOS's Cmd+? Help grab.
   menuTemplate.push({
     label: "Review",
     submenu: [
-      { label: "All questions", accelerator: "CommandOrControl+Shift+/", click: () => sendMerged("q") },
-      { label: "All change requests", accelerator: "CommandOrControl+Shift+.", click: () => sendMerged("c") },
+      { label: "All questions", accelerator: "Control+Command+Shift+/", click: () => sendMerged("q") },
+      { label: "All change requests", accelerator: "Control+Command+Shift+.", click: () => sendMerged("c") },
       { type: "separator" },
       // Whitespace-ignore re-runs git diff with --ignore-all-space and reloads (main-process action,
       // so a menu checkbox is simpler than a renderer IPC round-trip).
