@@ -39,6 +39,7 @@ export type DiffFile = {
   status: string;
   binary: boolean;
   hunks: DiffHunk[];
+  vcs?: "new" | "edited" | "staged";
 };
 
 export type SourceFile = {
@@ -55,6 +56,8 @@ export type SourceFile = {
   // Rendered preview for raster image files: a data: URI embedded by collectSourceFiles
   // (gated by IMAGE_MAX_BYTES). Present only for images; absent for text/binary files.
   image?: string;
+  // Working-tree git status for sidebar coloring: untracked(new)=red, modified=blue, staged(git add)=green.
+  vcs?: "new" | "edited" | "staged";
 };
 
 export type HttpSendRequest = {

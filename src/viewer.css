@@ -127,6 +127,10 @@ body {
 }
 .tab.active, .plain-button:hover { border-color: var(--active); color: var(--active); }
 .hidden { display: none !important; }
+/* IntelliJ-style git status on sidebar file names: untracked(new)=red, modified=blue, staged(git add)=green. */
+.vcs-new.source-link .path, .vcs-new.change-row .change-name { color: #d36c6c; }
+.vcs-edited.source-link .path, .vcs-edited.change-row .change-name { color: #6c9fd4; }
+.vcs-staged.source-link .path, .vcs-staged.change-row .change-name { color: #7faf6b; }
 .sidebar-footer {
   flex: 0 0 auto;
   padding: 8px 12px;

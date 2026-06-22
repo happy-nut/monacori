@@ -238,7 +238,7 @@ function renderDiffTree(files: DiffFile[]): string {
     const name = slash >= 0 ? file.displayPath.slice(slash + 1) : file.displayPath;
     const dir = slash > 0 ? file.displayPath.slice(0, slash) : "";
     return [
-      `<a class="file-link change-row" href="#file-${fileIndex}" data-hunk="${firstHunk}" data-file="${escapeAttr(file.displayPath)}" title="${escapeAttr(file.displayPath + " — " + file.status)}">`,
+      `<a class="file-link change-row${file.vcs ? " vcs-" + file.vcs : ""}" href="#file-${fileIndex}" data-hunk="${firstHunk}" data-file="${escapeAttr(file.displayPath)}" title="${escapeAttr(file.displayPath + " — " + file.status)}">`,
       fileTypeIcon(file.displayPath),
       `<span class="status status-${escapeAttr(file.status)}">${escapeHtml(file.status)}</span>`,
       `<span class="change-name"><span class="path" title="${escapeAttr(file.displayPath)}">${escapeHtml(name)}</span>${dir ? `<span class="change-dir">${escapeHtml(dir)}</span>` : ""}</span>`,
@@ -364,7 +364,7 @@ function fileTypeIcon(path: string): string {
 function renderSourceNode(node: SourceTreeNode, depth: number): string {
   if (node.file) {
     const file = node.file;
-    const classes = ["file-link", "source-link", "tree-file", file.embedded ? "" : "not-embedded"].filter(Boolean).join(" ");
+    const classes = ["file-link", "source-link", "tree-file", file.embedded ? "" : "not-embedded", file.vcs ? "vcs-" + file.vcs : ""].filter(Boolean).join(" ");
     const tip = file.path + (file.embedded ? "" : " — not embedded");
     return [
       `<button type="button" class="${classes}" data-source-file="${escapeAttr(file.path)}" style="--depth:${depth}" title="${escapeAttr(tip)}">`,

@@ -194,6 +194,34 @@ function imageMimeForPath(path: string): string | null {
   }
 }
 
+// Working-tree git status per path (git status --porcelain) for IntelliJ-style sidebar coloring:
+// untracked => "new" (red), index/staged change => "staged" (green, git add'd), unstaged worktree
+// change => "edited" (blue). "git add까지 되었으면" the index column wins, so staged > new/edited.
+function gitStatusMap(cwd: string): Map<string, "new" | "edited" | "staged"> {
+  const map = new Map<string, "new" | "edited" | "staged">();
+  let out = "";
+  try {
+    out = git(cwd, ["status", "--porcelain"]);
+  } catch {
+    return map;
+  }
+  for (const line of out.split(/\r?\n/)) {
+    if (line.length < 3) continue;
+    const x = line[0];
+    const y = line[1];
+    let path = line.slice(3);
+    const arrow = path.indexOf(" -> ");
+    if (arrow >= 0) path = path.slice(arrow + 4); // rename: color the new path
+    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+    let kind: "new" | "edited" | "staged";
+    if (x === "?" && y === "?") kind = "new";
+    else if (x !== " " && x !== "?") kind = "staged";
+    else kind = "edited";
+    map.set(path, kind);
+  }
+  return map;
+}
+
 export function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
   const changed = new Set(
     diffFiles
@@ -210,6 +238,11 @@ export function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
       }
     }
     changedLinesByPath.set(file.displayPath, nums);
+  }
+  const vcsByPath = gitStatusMap(process.cwd());
+  for (const file of diffFiles) {
+    const kind = vcsByPath.get(file.displayPath);
+    if (kind) file.vcs = kind; // color the Changes list from the same status map
   }
   const paths = new Set<string>();
   const gitFiles = git(process.cwd(), ["ls-files", "--cached", "--others", "--exclude-standard"]);
@@ -241,6 +274,7 @@ export function collectSourceFiles(diffFiles: DiffFile[]): SourceFile[] {
       embedded: false,
       changedLines: changedLinesByPath.get(path) || [],
       signature: "",
+      vcs: vcsByPath.get(path),
     };
 
     if (!existsSync(absolute)) {
