@@ -213,6 +213,13 @@ body {
   font: 12px/1.55 ui-sans-serif, system-ui, sans-serif;
 }
 .settings-textarea:focus { outline: none; border-color: var(--active); }
+.settings-select {
+  width: auto; box-sizing: border-box;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+  font: 12px/1.55 ui-sans-serif, system-ui, sans-serif;
+}
+.settings-select:focus { outline: none; border-color: var(--active); }
 .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .settings-saved { font-size: 12px; color: var(--active); }
 .app-info-keys-h { font-weight: 600; color: var(--text); margin-bottom: 8px; }
