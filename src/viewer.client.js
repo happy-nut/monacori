@@ -1957,15 +1957,15 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       // button so a click installs + restarts; otherwise (browser/static export) name the command instead.
       var ub = document.getElementById('app-info-update');
       if (ub && window.monacoriUpdate && typeof window.monacoriUpdate.run === 'function') {
-        ub.textContent = 'Update to v' + latest + ' & Restart';
+        ub.textContent = t('settings.updateRestart') + ' (v' + latest + ')';
         ub.classList.remove('hidden');
-        if (status) { status.textContent = 'Update available: v' + latest; status.classList.add('has-update'); }
+        if (status) { status.textContent = t('settings.updateAvailable') + ': v' + latest; status.classList.add('has-update'); }
       } else if (status) {
-        status.textContent = 'Update available: v' + latest + ' — npm i -g @happy-nut/monacori';
+        status.textContent = t('settings.updateAvailable') + ': v' + latest + ' — npm i -g @happy-nut/monacori';
         status.classList.add('has-update');
       }
     } else if (status) {
-      status.textContent = 'Up to date (v' + current + ')';
+      status.textContent = t('settings.upToDate') + ' (v' + current + ')';
     }
   };
   // Cache the npm result for the session so watch-mode reloads reuse it instead of refetching.
@@ -2024,11 +2024,11 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function')
       if (updateBtn.disabled) return;
       updateBtn.disabled = true;
       var status = document.getElementById('app-info-status');
-      if (status) { status.textContent = 'Updating… installing latest, the app will restart'; status.classList.add('has-update'); }
+      if (status) { status.textContent = t('settings.updating'); status.classList.add('has-update'); }
       window.monacoriUpdate.run().then(function (r) {
-        if (r && r.ok) { if (status) status.textContent = 'Updated. Restarting…'; }
-        else { updateBtn.disabled = false; if (status) status.textContent = 'Update failed — try again, or run: npm i -g @happy-nut/monacori'; }
-      }).catch(function () { updateBtn.disabled = false; if (status) status.textContent = 'Update failed — try again, or run: npm i -g @happy-nut/monacori'; });
+        if (r && r.ok) { if (status) status.textContent = t('settings.updated'); }
+        else { updateBtn.disabled = false; if (status) status.textContent = t('settings.updateFailed'); }
+      }).catch(function () { updateBtn.disabled = false; if (status) status.textContent = t('settings.updateFailed'); });
     });
   }
   if (qta) qta.addEventListener('input', function () { saveMergePrompt('q', qta.value); flash(); });
