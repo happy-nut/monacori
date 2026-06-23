@@ -113,9 +113,9 @@ function setupLazyDiff() {
   if (wrappers[0]) ensureFileReady(wrappers[0]); // first file ready so the initial caret has a row to land on
 }
 if (REVIEW_LAZY) { setupLazyDiff(); setTimeout(function () { diffBootDone = true; }, 0); }
-const links = Array.from(document.querySelectorAll('#changes-panel .file-link'));
+let links = Array.from(document.querySelectorAll('#changes-panel .file-link')); // re-captured on in-place diff update
 let sourceLinks = Array.from(document.querySelectorAll('.source-link')); // re-captured when a deferred tree materializes
-const sourceFiles = JSON.parse(document.getElementById('source-files-data')?.textContent || '[]');
+let sourceFiles = JSON.parse(document.getElementById('source-files-data')?.textContent || '[]');
 // i18n: the message catalog (en + ko) is emitted server-side; the locale lives in localStorage and the
 // whole UI switches live (no reload). t() feeds dynamically-built text; applyI18n() rewrites the static
 // chrome (data-i18n / -ph / -title / -aria). English is the first-paint default.
@@ -147,13 +147,13 @@ function applyI18n() {
   var sel = document.getElementById('settings-language');
   if (sel) sel.value = locale;
 }
-const fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
-const httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.textContent || '{}');
-const httpEnvNames = Object.keys(httpEnvironments);
+let fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
+let httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.textContent || '{}');
+let httpEnvNames = Object.keys(httpEnvironments);
 const httpEnvKey = 'monacori-http-env:' + location.pathname;
 const httpRequestsByPath = new Map();
 const httpVarsByPath = new Map();
-const sourceByPath = new Map(sourceFiles.map((file) => [file.path, file]));
+let sourceByPath = new Map(sourceFiles.map((file) => [file.path, file]));
 // Phase 2b lazy-LOAD: source content is fetched once after first paint (serve /source-data or the
 // Electron bridge) and merged into the metadata-only source records; until then sourceLoaded is false
 // and the source view shows a brief loading state. Non-lazy-load modes embed source -> already loaded.
@@ -190,10 +190,10 @@ function loadSourceData() {
     if (pendingSymbol) { var s = pendingSymbol; pendingSymbol = null; goToDefOrUsages(s); }
   }, function () { sourceLoaded = true; sourceLoading = false; });
 }
-const fileSignatureByPath = new Map(fileStates.map((file) => [file.path, file.signature]));
+let fileSignatureByPath = new Map(fileStates.map((file) => [file.path, file.signature]));
 const reviewMeta = document.getElementById('review-meta');
 const watchEnabled = reviewMeta?.dataset.watch === 'true';
-const currentSignature = reviewMeta?.dataset.signature || '';
+let currentSignature = reviewMeta?.dataset.signature || '';
 const uiStateKey = 'monacori-diff-ui:' + location.pathname;
 const recentKey = 'monacori-diff-recent:' + location.pathname;
 const viewedKey = 'monacori-diff-viewed:' + location.pathname;
@@ -971,6 +971,13 @@ document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && (event.code === 'Slash' || event.code === 'Period' || event.key === '?' || event.key === '>')) {
     event.preventDefault();
     openMergedView((event.code === 'Slash' || event.key === '?') ? 'q' : 'c');
+    return;
+  }
+  // Cmd/Ctrl+Shift+N opens/closes the prompt memo. Electron also routes this via the Review menu; in the
+  // browser/serve build (no menu) this keydown is the only path. Match the physical key so layout/IME never swallows it.
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.code === 'KeyN' || event.key === 'n' || event.key === 'N')) {
+    event.preventDefault();
+    openMemoView();
     return;
   }
   // "?" = question, ">" = change-request composer on the current line/selection (no modifier).
@@ -1943,6 +1950,96 @@ function openMergedView(kind) {
   }
 }
 
+// Prompt memo (Cmd/Ctrl+Shift+N): one freeform Markdown scratchpad with a live split preview, persisted
+// across reopens via the same store as comments/locale. "Send to terminal" hands the current draft to the
+// same pane-pick mode the merged views use, so a half-formed prompt can target any live claude/codex session.
+var memoKey = 'monacori-memo';
+function loadMemo() {
+  var v = persistRead(memoKey);
+  if (typeof v === 'string') return v;
+  try { var s = localStorage.getItem(memoKey); return typeof s === 'string' ? s : ''; } catch (e) { return ''; }
+}
+function saveMemo(text) { persistSave(memoKey, text || ''); }
+function renderMemoMd(text) {
+  if (!text || !text.trim()) return '<div class="mc-memo-empty" data-i18n="memo.previewEmpty">' + escapeHtml(t('memo.previewEmpty')) + '</div>';
+  return renderMarkdownBlocks(text).map(function (b) { return b.html; }).join('');
+}
+function openMemoView() {
+  var existing = document.getElementById('mc-memo');
+  if (existing) { existing.remove(); return; } // the shortcut toggles: a second press closes the memo
+  var modal = document.createElement('div');
+  modal.id = 'mc-memo';
+  modal.className = 'mc-modal';
+  var panel = document.createElement('div');
+  panel.className = 'mc-modal-panel mc-memo-panel';
+  var head = document.createElement('div');
+  head.className = 'mc-modal-head';
+  var title = document.createElement('span');
+  title.setAttribute('data-i18n', 'memo.title');
+  title.textContent = t('memo.title');
+  var closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'mc-btn mc-ghost';
+  closeBtn.setAttribute('data-i18n', 'merged.close');
+  closeBtn.textContent = t('merged.close');
+  closeBtn.addEventListener('click', function () { modal.remove(); });
+
+  var body = document.createElement('div');
+  body.className = 'mc-memo-body';
+  var area = document.createElement('textarea');
+  area.className = 'mc-modal-text mc-memo-edit';
+  area.spellcheck = false;
+  area.setAttribute('data-i18n-ph', 'memo.placeholder');
+  area.placeholder = t('memo.placeholder');
+  area.value = loadMemo();
+  var preview = document.createElement('div');
+  preview.className = 'md-cell mc-memo-preview';
+  preview.innerHTML = renderMemoMd(area.value);
+  area.addEventListener('input', function () {
+    saveMemo(area.value);
+    preview.innerHTML = renderMemoMd(area.value);
+  });
+
+  // Terminal send: hand the current draft to pane-pick mode (arrows choose the session, Enter sends). Shown
+  // only once a terminal pane exists; enterSendMode reopens the panel if it was closed.
+  var sendBtn = null;
+  if (window.__monacoriTerminal && typeof window.__monacoriTerminal.paneCount === 'function' && window.__monacoriTerminal.paneCount() > 0) {
+    sendBtn = document.createElement('button');
+    sendBtn.type = 'button';
+    sendBtn.className = 'mc-btn mc-send-term';
+    sendBtn.setAttribute('data-i18n', 'merged.sendToTerminal');
+    sendBtn.textContent = t('merged.sendToTerminal');
+    sendBtn.addEventListener('click', function () {
+      var text = area.value;
+      modal.remove();
+      window.__monacoriTerminal.enterSendMode(text);
+    });
+  }
+
+  head.appendChild(title);
+  if (sendBtn) head.appendChild(sendBtn);
+  head.appendChild(closeBtn);
+  body.appendChild(area);
+  body.appendChild(preview);
+  panel.appendChild(head);
+  panel.appendChild(body);
+  modal.appendChild(panel);
+  modal.addEventListener('mousedown', function (e) { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); modal.remove(); } });
+  document.body.appendChild(modal);
+  // Focus the editor; Electron async-restores focus to <body>, so retry briefly (same as the composer/merged view).
+  var memoFocusTries = 0;
+  var tryFocusMemo = function () {
+    if (!document.getElementById('mc-memo')) return true;
+    if (document.activeElement === area) return true;
+    try { area.focus(); } catch (e) {}
+    return document.activeElement === area;
+  };
+  if (!tryFocusMemo()) {
+    var memoFocusIv = setInterval(function () { if (tryFocusMemo() || ++memoFocusTries > 12) clearInterval(memoFocusIv); }, 25);
+  }
+}
+
 document.addEventListener('click', function (event) {
   var t = event.target;
   if (!t || !t.closest) return;
@@ -2011,7 +2108,11 @@ refreshComments();
 
   function setActive(p) {
     active = p;
-    panes.forEach(function (q) { q.el.classList.toggle('is-active', q === p); });
+    panes.forEach(function (q) {
+      q.el.classList.toggle('is-active', q === p);
+      // 2+ panes: dim every pane but the active one (no border, just a clean focus cue). A lone pane stays full.
+      q.el.classList.toggle('is-inactive', panes.length > 1 && q !== p);
+    });
     if (p) requestAnimationFrame(function () { try { p.term.focus(); } catch (e) {} });
   }
 
@@ -2044,7 +2145,13 @@ refreshComments();
     term.attachCustomKeyEventHandler(function (e) {
       if (e.type === 'keydown' && e.metaKey) {
         var k = (e.key || '').toLowerCase();
-        if (k === 'c' || k === 'v' || k === 'x' || k === 'a') return true;
+        // The bare modifier press (Cmd goes down BEFORE the letter on macOS) must not blur — blurring
+        // here drops the textarea focus the upcoming Cmd+V paste / Cmd+C copy needs, which broke them.
+        if (k === 'meta' || k === 'control' || k === 'alt' || k === 'shift') return true;
+        // Match the PHYSICAL key (e.code), not e.key: under a non-Latin layout/IME (e.g. Korean 한글)
+        // Cmd+V reports e.key as 'ㅍ', so a key-based check misses it — blurring the terminal and
+        // breaking paste/copy/cut/select-all whenever the Korean input source is active.
+        if (e.code === 'KeyC' || e.code === 'KeyV' || e.code === 'KeyX' || e.code === 'KeyA') return true;
         try { term.blur(); } catch (x) {}
         return false;
       }
@@ -2238,6 +2345,15 @@ if (window.monacoriMenu && typeof window.monacoriMenu.onMergedView === 'function
   // Always open the merged-view modal; sending to a terminal pane is a button inside it (per-pane when
   // split), so the user can pick which claude/codex session receives the prompt.
   window.monacoriMenu.onMergedView(function (kind) { openMergedView(kind); });
+}
+if (window.monacoriMenu && typeof window.monacoriMenu.onOpenMemo === 'function') {
+  // Cmd/Ctrl+Shift+N from the Review menu -> open/close the prompt memo.
+  window.monacoriMenu.onOpenMemo(function () { openMemoView(); });
+}
+if (window.monacoriMenu && typeof window.monacoriMenu.onDiffUpdate === 'function') {
+  // Electron watch: main rebuilds on working-tree changes and pushes the new HTML so we refresh the diff
+  // in place — NO window reload — keeping the integrated terminal's pty sessions (claude/codex) alive.
+  window.monacoriMenu.onDiffUpdate(function (html) { try { applyDiffUpdate(html); } catch (e) {} });
 }
 if (window.monacoriMenu && typeof window.monacoriMenu.onCloseTab === 'function') {
   // Cmd/Ctrl+W: close the active Files-mode tab (no-op outside the source viewer).
@@ -2471,6 +2587,83 @@ function restoreUiState() {
   return false;
 }
 
+// In-place diff refresh (instead of a full window reload): take a freshly built review HTML, transplant
+// only the diff/sidebar/data nodes, and re-run the bootstrap steps. Because the window never reloads, the
+// integrated terminal's pty sessions (claude/codex) survive a watch refresh. Electron's main process pushes
+// the HTML over IPC (monacori:diff-update); serve mode's poller fetches /review and calls the same path.
+function applyDiffUpdate(html) {
+  if (!html) return false;
+  var doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return false; }
+  var newMeta = doc.getElementById('review-meta');
+  var newSig = (newMeta && newMeta.getAttribute('data-signature')) || '';
+  if (!newSig || newSig === currentSignature) return false; // unchanged or unparseable — nothing to do
+
+  // Remember what to restore after the swap (comments/viewed persist on their own; these don't).
+  var sv = document.getElementById('source-viewer');
+  var openPath = (sv && sv.dataset.openPath) || '';
+  var wasSource = isSourceViewerVisible();
+  var container = document.getElementById('diff2html-container');
+  var diffScrollTop = container ? container.scrollTop : 0;
+
+  // 1) Swap the JSON data islands' text (re-parsed below) + refresh review-meta's dataset.
+  ['file-state-data', 'source-files-data', 'http-env-data', 'files-tree-html'].forEach(function (id) {
+    var cur = document.getElementById(id), next = doc.getElementById(id);
+    if (cur && next) cur.textContent = next.textContent;
+  });
+  if (reviewMeta && newMeta) {
+    ['data-signature', 'data-generated-at', 'data-watch', 'data-lazy', 'data-lazy-load'].forEach(function (a) {
+      if (newMeta.hasAttribute(a)) reviewMeta.setAttribute(a, newMeta.getAttribute(a));
+    });
+  }
+
+  // 2) Replace the visible regions: diff container, sidebar trees, the review-status counts.
+  var newContainer = doc.getElementById('diff2html-container');
+  if (container && newContainer) container.innerHTML = newContainer.innerHTML;
+  ['changes-panel', 'files-panel'].forEach(function (id) {
+    var cur = document.getElementById(id), next = doc.getElementById(id);
+    if (cur && next) cur.innerHTML = next.innerHTML;
+  });
+  var curStatus = document.querySelector('.review-status'), nextStatus = doc.querySelector('.review-status');
+  if (curStatus && nextStatus) curStatus.innerHTML = nextStatus.innerHTML;
+
+  // 3) Re-derive the module-level state from the swapped data islands.
+  fileStates = JSON.parse(document.getElementById('file-state-data')?.textContent || '[]');
+  fileSignatureByPath = new Map(fileStates.map(function (f) { return [f.path, f.signature]; }));
+  sourceFiles = JSON.parse(document.getElementById('source-files-data')?.textContent || '[]');
+  sourceByPath = new Map(sourceFiles.map(function (f) { return [f.path, f]; }));
+  httpEnvironments = JSON.parse(document.getElementById('http-env-data')?.textContent || '{}');
+  httpEnvNames = Object.keys(httpEnvironments);
+  currentSignature = newSig;
+  links = Array.from(document.querySelectorAll('#changes-panel .file-link'));
+  sourceLinks = Array.from(document.querySelectorAll('.source-link'));
+
+  // 4) Reset lazy-materialize + index state so the new diff bodies / source / symbols rebuild on demand.
+  bodyPromise = {};
+  diffBootDone = false;
+  sourceLoaded = !REVIEW_LAZY_LOAD; // lazyLoad: re-fetch source content on next use
+  sourceLoading = false;
+  symbolIndex = null;
+  if (REVIEW_LAZY) { setupLazyDiff(); setTimeout(function () { diffBootDone = true; }, 0); }
+  else { prepareDiff2HtmlHunks(); diffBootDone = true; }
+  if (!REVIEW_LAZY_LOAD) setTimeout(startSymbolIndex, 0);
+
+  // 5) Re-run the DOM-dependent bootstrap steps.
+  applyI18n();
+  populateHttpEnvSelect();
+  initSourceTreeFolds();
+  refreshComments();
+
+  // 6) Best-effort restore of what the user was looking at.
+  if (wasSource && openPath && sourceByPath.has(openPath)) {
+    openSourceFile(openPath, false);
+  } else if (container) {
+    showDiffView(false);
+    container.scrollTop = diffScrollTop;
+  }
+  return true;
+}
+
 async function checkForLiveUpdate() {
   if (checkingForUpdates) return;
   checkingForUpdates = true;
@@ -2483,8 +2676,12 @@ async function checkForLiveUpdate() {
       liveStatus.textContent = t('status.live.updated') + ' ' + new Date(state.generatedAt).toLocaleTimeString();
     }
     if (state.signature && state.signature !== currentSignature) {
-      saveUiState();
-      location.reload();
+      // serve mode: pull the rebuilt /review HTML and refresh in place (same path Electron uses over IPC)
+      // rather than reloading — so an open integrated terminal keeps its sessions.
+      try {
+        var fresh = await fetch('review', { cache: 'no-store' });
+        if (fresh.ok) applyDiffUpdate(await fresh.text());
+      } catch (e) {}
     }
   } catch {
     if (liveStatus) liveStatus.textContent = t('status.live.waiting');
@@ -3810,16 +4007,21 @@ function populateHttpEnvSelect() {
     opts += '<option value="' + escapeHtml(name) + '"' + (name === currentHttpEnvName ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
   });
   select.innerHTML = opts;
-  select.addEventListener('change', function () {
-    currentHttpEnvName = select.value;
-    try { localStorage.setItem(httpEnvKey, currentHttpEnvName); } catch (error) {}
-    const path = document.getElementById('source-viewer')?.dataset.openPath || '';
-    if (path && isHttpFile(path)) {
-      const file = sourceByPath.get(path);
-      const body = document.getElementById('source-body');
-      if (file && body) body.innerHTML = renderHttpTable(file);
-    }
-  });
+  // The <select> lives in the toolbar (not swapped on in-place diff updates), so wire the change handler
+  // exactly once — populateHttpEnvSelect is re-called by applyDiffUpdate to refresh the options.
+  if (!select.dataset.wired) {
+    select.dataset.wired = '1';
+    select.addEventListener('change', function () {
+      currentHttpEnvName = select.value;
+      try { localStorage.setItem(httpEnvKey, currentHttpEnvName); } catch (error) {}
+      const path = document.getElementById('source-viewer')?.dataset.openPath || '';
+      if (path && isHttpFile(path)) {
+        const file = sourceByPath.get(path);
+        const body = document.getElementById('source-body');
+        if (file && body) body.innerHTML = renderHttpTable(file);
+      }
+    });
+  }
 }
 
 function renderSourceTable(file, query) {

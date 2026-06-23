@@ -87,8 +87,29 @@ ipcMain.handle("monacori:pty-spawn", (_event, size: { cols?: number; rows?: numb
   const deliver = (channel: string, payload: unknown) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
   };
-  t.onData((data) => deliver("monacori:pty-data", { id, data }));
-  t.onExit(() => { terms.delete(id); deliver("monacori:pty-exit", { id }); });
+  // pty output can arrive as many tiny chunks (thousands/sec under fast output). One IPC per chunk floods
+  // the renderer, so coalesce: buffer chunks and flush on a short timer, or immediately once the buffer is
+  // large — bounding both IPC traffic and added latency.
+  let outBuf = "";
+  let flushTimer: NodeJS.Timeout | undefined;
+  const flushOut = () => {
+    flushTimer = undefined;
+    if (!outBuf) return;
+    const data = outBuf;
+    outBuf = "";
+    deliver("monacori:pty-data", { id, data });
+  };
+  t.onData((data) => {
+    outBuf += data;
+    if (outBuf.length >= 64 * 1024) { if (flushTimer) clearTimeout(flushTimer); flushOut(); }
+    else if (!flushTimer) { flushTimer = setTimeout(flushOut, 12); }
+  });
+  t.onExit(() => {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushOut(); // deliver any buffered tail before signaling exit
+    terms.delete(id);
+    deliver("monacori:pty-exit", { id });
+  });
   return { ok: true, id };
 });
 ipcMain.on("monacori:pty-write", (_event, msg: { id: number; data: string }) => { terms.get(msg?.id)?.write(msg.data); });
@@ -159,6 +180,8 @@ app.whenReady().then(async () => {
     submenu: [
       { label: "All questions", accelerator: "Control+Command+Shift+/", click: () => sendMerged("q") },
       { label: "All change requests", accelerator: "Control+Command+Shift+.", click: () => sendMerged("c") },
+      // Cmd/Ctrl+Shift+N opens (and toggles) the single freeform prompt memo — a Markdown scratchpad.
+      { label: "Prompt memo", accelerator: "CommandOrControl+Shift+N", click: () => mainWindow?.webContents.send("monacori:open-memo") },
       { type: "separator" },
       // Whitespace-ignore re-runs git diff with --ignore-all-space and reloads (main-process action,
       // so a menu checkbox is simpler than a renderer IPC round-trip).
@@ -263,7 +286,12 @@ async function refreshIfChanged(): Promise<void> {
     const next = writeReviewFile(options);
     if (next.signature !== currentSignature) {
       currentSignature = next.signature;
-      mainWindow.webContents.reloadIgnoringCache();
+      // Refresh the diff in place instead of reloading the window. A full reload re-runs the renderer,
+      // whose beforeunload kills every pty — so an integrated terminal running claude/codex would die on
+      // each working-tree change. The renderer transplants the new diff/trees/data from this HTML and
+      // re-fetches per-file bodies/source over the existing IPC (currentBodies/currentSourceData were just
+      // refreshed by writeReviewFile above).
+      mainWindow.webContents.send("monacori:diff-update", next.html);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -272,7 +300,7 @@ async function refreshIfChanged(): Promise<void> {
   }
 }
 
-function writeReviewFile(input: AppOptions): { signature: string } {
+function writeReviewFile(input: AppOptions): { signature: string; html: string } {
   const build = buildDiffReview({
     base: input.base,
     staged: input.staged,
@@ -286,7 +314,7 @@ function writeReviewFile(input: AppOptions): { signature: string } {
   writeFileSync(reviewPath(), build.html);
   currentBodies = build.lazyBodies ?? [];
   currentSourceData = build.lazySourceData ?? "[]";
-  return { signature: build.signature };
+  return { signature: build.signature, html: build.html };
 }
 
 function reviewPath(): string {

@@ -103,6 +103,7 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "kbd.allQuestionsChanges": "All questions / changes",
     "kbd.ignoreWhitespace": "Ignore whitespace",
     "kbd.saveComment": "Save comment",
+    "kbd.promptMemo": "Prompt memo",
     "kbd.toggleTerminal": "Toggle terminal",
     "kbd.splitPane": "Split pane",
     "kbd.focusPane": "Focus prev / next pane",
@@ -139,6 +140,11 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "merged.close": "Close",
     "merged.qHeading": "# Questions",
     "merged.cHeading": "# Change requests",
+
+    // Prompt memo (Cmd/Ctrl+Shift+N) — a single freeform Markdown scratchpad with a live split preview.
+    "memo.title": "Prompt memo",
+    "memo.placeholder": "Jot down what you're planning, in Markdown…",
+    "memo.previewEmpty": "Markdown preview shows up here as you type.",
 
     // Merge-prompt default agent contracts (these follow the locale — a Korean user gets Korean defaults)
     "mergePrompt.default.q": "The following are questions about code you just wrote. Answer each one — explain the intent, rationale, or context. Do not change any code; this clarifies understanding before any revisions.",
@@ -237,6 +243,7 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     "kbd.allQuestionsChanges": "전체 질문 / 변경요청",
     "kbd.ignoreWhitespace": "공백 무시",
     "kbd.saveComment": "코멘트 저장",
+    "kbd.promptMemo": "프롬프트 메모",
     "kbd.toggleTerminal": "터미널 토글",
     "kbd.splitPane": "패널 분할",
     "kbd.focusPane": "이전 / 다음 패널로 이동",
@@ -274,6 +281,11 @@ export const MESSAGES: Record<string, Record<string, string>> = {
     // Structural markers stay English in both locales (the preamble prose below follows the locale).
     "merged.qHeading": "# Questions",
     "merged.cHeading": "# Change requests",
+
+    // 프롬프트 메모 (Cmd/Ctrl+Shift+N) — 라이브 분할 미리보기가 있는 자유 형식 마크다운 메모 한 장.
+    "memo.title": "프롬프트 메모",
+    "memo.placeholder": "구상 중인 것을 마크다운으로 적어 보세요…",
+    "memo.previewEmpty": "입력하면 여기에 마크다운 미리보기가 나타납니다.",
 
     // Merge-prompt default agent contracts (Korean default for Korean users)
     "mergePrompt.default.q": "다음은 방금 작성한 코드에 대한 질문입니다. 각 질문에 답하면서 의도, 근거, 맥락을 설명하세요. 코드는 변경하지 마세요. 이 단계는 수정에 앞서 이해를 명확히 하기 위한 것입니다.",

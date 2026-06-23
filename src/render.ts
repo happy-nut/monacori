@@ -223,6 +223,7 @@ export function renderDiffHtml(input: {
     '<kbd>Cmd/Ctrl+Shift+/ .</kbd><span data-i18n="kbd.allQuestionsChanges">All questions / changes</span>' +
     '<kbd>Cmd/Ctrl+Shift+W</kbd><span data-i18n="kbd.ignoreWhitespace">Ignore whitespace</span>' +
     '<kbd>Cmd/Ctrl+Enter</kbd><span data-i18n="kbd.saveComment">Save comment</span>' +
+    '<kbd>Cmd/Ctrl+Shift+N</kbd><span data-i18n="kbd.promptMemo">Prompt memo</span>' +
     '</div>' +
     '<div class="keys-cat" data-i18n="settings.kbd.cat.terminal">Terminal</div>' +
     '<div class="keys-grid">' +

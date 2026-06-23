@@ -1,13 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import type { DiffReviewResult, FlowConfig, VerificationRun } from "./types.js";
+import type { FlowConfig } from "./types.js";
 import { AGENT_SNIPPET_FILE, CONFIG_FILE, DECISIONS_FILE, FLOW_DIR, GITIGNORE_FILE, STATE_FILE } from "./constants.js";
-import { codeBlock, listRecentFiles, parsePositiveInteger, readOption, readStdin, sanitizeFilePart, summarizeForState, timestampForFile } from "./util.js";
-import { git, readGitSnapshot } from "./git.js";
-import { createDiffReview, serveDiffWatch } from "./server.js";
+import { parsePositiveInteger, readOption } from "./util.js";
+import { git } from "./git.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -32,28 +31,12 @@ export function main(): void {
       case "install":
         installFlow(args);
         break;
-      case "check":
-      case "go":
-        runCheck(args);
-        break;
-      case "verify":
-        runVerification(args);
-        break;
-      case "diff":
-        renderDiffReview(args);
-        break;
       case "app":
       case "review":
         launchReviewApp(args);
         break;
       case "open":
         openCurrentRepository(args);
-        break;
-      case "status":
-        printStatus();
-        break;
-      case "report":
-        recordReport(args);
         break;
       case "--help":
       case "-h":
@@ -102,7 +85,7 @@ function initFlow(args: string[]): void {
     if (ignored) {
       console.log(`Updated ${GITIGNORE_FILE} to ignore ${FLOW_DIR}/ validation artifacts.`);
     }
-    console.log("Next: run `monacori app --include-untracked` to inspect changes, then `monacori check --include-untracked` to record verification.");
+    console.log("Next: run `mo` to open the diff review app.");
   }
 }
 
@@ -123,129 +106,6 @@ function installFlow(args: string[]): void {
   } else {
     console.log(`Next: add ${FLOW_DIR}/${AGENT_SNIPPET_FILE} to your agent instructions if desired.`);
   }
-}
-
-function runCheck(args: string[]): void {
-  if (args.includes("--help") || args.includes("-h")) {
-    printCheckHelp();
-    return;
-  }
-  ensureWritableFlowState();
-
-  const config = loadConfig();
-  const separator = args.indexOf("--");
-  const commandArgs = separator >= 0 ? args.slice(separator + 1) : [];
-  const optionArgs = separator >= 0 ? args.slice(0, separator) : args;
-  const noVerify = optionArgs.includes("--no-verify");
-  const noDiff = optionArgs.includes("--no-diff");
-  const openInBrowser = optionArgs.includes("--open");
-  const includeUntracked = optionArgs.includes("--include-untracked") || config.diff.includeUntracked;
-  const staged = optionArgs.includes("--staged");
-  const base = readOption(optionArgs, "--base");
-  const contextValue = readOption(optionArgs, "--context");
-  const context = contextValue ? parsePositiveInteger(contextValue, "--context") : config.diff.context;
-
-  const verification = noVerify
-    ? { commands: [], failed: false, skipped: true } satisfies VerificationRun
-    : executeVerification(commandArgs.join(" "));
-
-  let review: DiffReviewResult | undefined;
-  if (!noDiff) {
-    review = createDiffReview({
-      base,
-      staged,
-      includeUntracked,
-      context,
-      output: join(process.cwd(), FLOW_DIR, "diffs", `${timestampForFile()}-check.html`),
-      title: "monacori validation diff",
-    });
-    if (openInBrowser) {
-      spawnSync("open", [review.path], { stdio: "ignore" });
-    }
-  }
-
-  const reportPath = writeCheckReport({ verification, review });
-  console.log("# monacori check");
-  console.log(`Verification: ${verification.skipped ? "skipped" : verification.failed ? "failed" : "passed"}`);
-  if (verification.logPath) {
-    console.log(`Log: ${relative(process.cwd(), verification.logPath)}`);
-  }
-  if (review) {
-    console.log(`Diff review: ${relative(process.cwd(), review.path)}`);
-    console.log(`Files: ${review.files}`);
-    console.log(`Hunks: ${review.hunks}`);
-  }
-  console.log(`Report: ${relative(process.cwd(), reportPath)}`);
-  if (verification.failed) {
-    process.exit(1);
-  }
-}
-
-function runVerification(args: string[]): void {
-  const separator = args.indexOf("--");
-  const explicitCommand = separator >= 0 ? args.slice(separator + 1).join(" ") : "";
-  const result = executeVerification(explicitCommand, { requireCommands: true });
-  if (result.logPath) {
-    console.log(`Verification log: ${relative(process.cwd(), result.logPath)}`);
-  }
-  if (result.failed) {
-    console.error("Verification failed.");
-    process.exit(1);
-  }
-  console.log("Verification passed.");
-}
-
-function renderDiffReview(args: string[]): void {
-  if (args.includes("--help") || args.includes("-h")) {
-    printDiffHelp();
-    return;
-  }
-  ensureWritableFlowState();
-
-  const config = loadConfig();
-  const contextValue = readOption(args, "--context");
-  const context = contextValue ? parsePositiveInteger(contextValue, "--context") : config.diff.context;
-  const base = readOption(args, "--base");
-  const staged = args.includes("--staged");
-  const includeUntracked = args.includes("--include-untracked") || config.diff.includeUntracked;
-  const openInBrowser = args.includes("--open");
-  const watch = args.includes("--watch");
-  const ignoreWhitespace = args.includes("--ignore-whitespace");
-
-  if (watch) {
-    serveDiffWatch({
-      base,
-      staged,
-      includeUntracked,
-      context,
-      openInBrowser,
-      port: readOption(args, "--port"),
-      ignoreWhitespace,
-    });
-    return;
-  }
-
-  const output = readOption(args, "--output") ??
-    join(process.cwd(), FLOW_DIR, "diffs", `${timestampForFile()}-review.html`);
-  const result = createDiffReview({
-    base,
-    staged,
-    includeUntracked,
-    context,
-    output,
-    title: "monacori diff review",
-    ignoreWhitespace,
-  });
-
-  if (openInBrowser) {
-    spawnSync("open", [result.path], { stdio: "ignore" });
-  }
-
-  console.log(`Diff review: ${relative(process.cwd(), result.path)}`);
-  console.log(`URL: ${result.url}`);
-  console.log(`Files: ${result.files}`);
-  console.log(`Hunks: ${result.hunks}`);
-  console.log("Keys: F7 next hunk, Shift+F7 previous hunk, Shift Shift search files, Cmd/Ctrl+E recent files, Cmd/Ctrl+Down jump to symbol.");
 }
 
 function launchReviewApp(args: string[]): void {
@@ -316,150 +176,6 @@ function appMainPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "app-main.js");
 }
 
-function printStatus(): void {
-  ensureInitialized();
-  const config = loadConfig();
-  const git = readGitSnapshot(process.cwd());
-  const reports = listRecentFiles(join(process.cwd(), FLOW_DIR, "reports"), 5);
-  const logs = listRecentFiles(join(process.cwd(), FLOW_DIR, "logs"), 5);
-
-  console.log(`# ${config.projectName} validation status`);
-  console.log("");
-  console.log(`Branch: ${git.branch || "(unknown)"}`);
-  console.log("");
-  console.log("## Git status");
-  console.log(git.status || "clean");
-  console.log("");
-  console.log("## Diff stat");
-  console.log(git.diffStat || "no diff");
-  console.log("");
-  console.log("## Verification commands");
-  const commands = getVerificationCommands(config);
-  if (commands.length === 0) {
-    console.log("none configured");
-  } else {
-    for (const command of commands) {
-      console.log(`- ${command}`);
-    }
-  }
-  console.log("");
-  console.log("## Recent reports");
-  console.log(reports.length === 0 ? "none" : reports.map((path) => `- ${relative(process.cwd(), path)}`).join("\n"));
-  console.log("");
-  console.log("## Recent logs");
-  console.log(logs.length === 0 ? "none" : logs.map((path) => `- ${relative(process.cwd(), path)}`).join("\n"));
-}
-
-function recordReport(args: string[]): void {
-  ensureWritableFlowState();
-  const file = readOption(args, "--file");
-  const label = readOption(args, "--label") ?? "manual";
-  const body = file ? readFileSync(file, "utf8") : readStdin();
-  if (body.trim().length === 0) {
-    throw new Error("No report content provided. Pass --file or pipe report text on stdin.");
-  }
-
-  const timestamp = timestampForFile();
-  const reportDir = join(process.cwd(), FLOW_DIR, "reports");
-  mkdirSync(reportDir, { recursive: true });
-  const reportPath = join(reportDir, `${timestamp}-${sanitizeFilePart(label)}.md`);
-  writeFileSync(reportPath, [
-    `# Monacori Report: ${label}`,
-    "",
-    `Recorded: ${new Date().toISOString()}`,
-    "",
-    body.trim(),
-    "",
-  ].join("\n"));
-  appendToState(`\n## Report ${timestamp} (${label})\n\n${summarizeForState(body)}\n`);
-  console.log(`Recorded ${relative(process.cwd(), reportPath)}`);
-}
-
-function executeVerification(explicitCommand = "", options: { requireCommands?: boolean } = {}): VerificationRun {
-  ensureWritableFlowState();
-  const config = loadConfig();
-  const commands = explicitCommand.trim() ? [explicitCommand.trim()] : getVerificationCommands(config);
-  if (commands.length === 0) {
-    if (options.requireCommands) {
-      throw new Error(`No verification commands found. Add them to ${FLOW_DIR}/${CONFIG_FILE} or pass \`-- <command>\`.`);
-    }
-    return { commands: [], failed: false, skipped: true };
-  }
-
-  const logPath = join(process.cwd(), FLOW_DIR, "logs", `verify-${timestampForFile()}.log`);
-  const chunks: string[] = [];
-  let failed = false;
-
-  for (const command of commands) {
-    chunks.push(`$ ${command}\n`);
-    const result = spawnSync(command, {
-      cwd: process.cwd(),
-      shell: true,
-      encoding: "utf8",
-      env: process.env,
-      maxBuffer: 1024 * 1024 * 100,
-    });
-    chunks.push(result.stdout ?? "");
-    chunks.push(result.stderr ?? "");
-    chunks.push(`\nexit: ${result.status ?? 1}\n\n`);
-    if ((result.status ?? 1) !== 0) {
-      failed = true;
-      break;
-    }
-  }
-
-  writeFileSync(logPath, chunks.join(""));
-  return { commands, failed, skipped: false, logPath };
-}
-
-function writeCheckReport(input: {
-  verification: VerificationRun;
-  review?: DiffReviewResult;
-}): string {
-  const timestamp = timestampForFile();
-  const git = readGitSnapshot(process.cwd());
-  const reportDir = join(process.cwd(), FLOW_DIR, "reports");
-  mkdirSync(reportDir, { recursive: true });
-  const reportPath = join(reportDir, `${timestamp}-check.md`);
-  const verificationStatus = input.verification.skipped
-    ? "skipped"
-    : input.verification.failed
-      ? "failed"
-      : "passed";
-  const report = [
-    "# Monacori Validation Check",
-    "",
-    `Recorded: ${new Date().toISOString()}`,
-    `Branch: ${git.branch || "(unknown)"}`,
-    `Verification: ${verificationStatus}`,
-    input.verification.logPath ? `Log: ${relative(process.cwd(), input.verification.logPath)}` : "",
-    input.review ? `Diff review: ${relative(process.cwd(), input.review.path)}` : "",
-    input.review ? `Changed files: ${input.review.files}` : "",
-    input.review ? `Changed hunks: ${input.review.hunks}` : "",
-    "",
-    "## Commands",
-    input.verification.commands.length === 0
-      ? "- none"
-      : input.verification.commands.map((command) => `- \`${command}\``).join("\n"),
-    "",
-    "## Git Status",
-    codeBlock(git.status || "clean"),
-    "",
-    "## Diff Stat",
-    codeBlock(git.diffStat || "no diff"),
-    "",
-  ].filter((line) => line !== "").join("\n");
-  writeFileSync(reportPath, report);
-  appendToState(`\n## Check ${timestamp}\n\n- Verification: ${verificationStatus}\n${input.review ? `- Diff review: ${relative(process.cwd(), input.review.path)}\n` : ""}`);
-  return reportPath;
-}
-
-function appendToState(content: string): void {
-  const path = join(process.cwd(), FLOW_DIR, STATE_FILE);
-  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-  writeFileSync(path, `${current.trimEnd()}\n${content}`);
-}
-
 function initialState(config: FlowConfig): string {
   return [
     "# Monacori Validation State",
@@ -481,7 +197,7 @@ function initialDecisions(): string {
   return [
     "# Monacori Decisions",
     "",
-    "Record durable validation decisions here so future checks do not depend on chat memory.",
+    "Record durable review decisions here so they do not depend on chat memory.",
     "",
   ].join("\n");
 }
@@ -489,20 +205,17 @@ function initialDecisions(): string {
 function agentSnippet(): string {
   return [
     "<!-- MONACORI:START -->",
-    "## monacori Validation",
+    "## monacori Diff Review",
     "",
-    "This repository uses monacori to verify AI-generated code changes.",
+    "This repository uses monacori to help humans review AI-generated code changes side-by-side.",
     "",
-    "Before claiming completion on a code change:",
+    "After making code changes:",
     "",
-    "- Run `monacori check --include-untracked` or a more specific `monacori verify -- <command>`.",
-    "- Use `monacori app --include-untracked` while changes are still moving.",
+    "- The user can run `mo` to open the diff review app and inspect your changes.",
     "- Inspect changed hunks with F7 / Shift+F7.",
     "- Use Shift Shift in the diff review to search indexed files, including unchanged files.",
     "- In source previews, use Cmd/Ctrl+Down to jump to the declaration-like match under the cursor.",
-    "- Report the verification commands, results, and remaining risks.",
-    "",
-    "Do not claim a change is done without verification evidence or a precise explanation of why verification could not run.",
+    "- Inline comments left in the review are bundled into a prompt and sent back to the session.",
     "<!-- MONACORI:END -->",
     "",
   ].join("\n");
@@ -552,10 +265,6 @@ function loadConfig(): FlowConfig {
       includeUntracked: typeof raw.diff?.includeUntracked === "boolean" ? raw.diff.includeUntracked : false,
     },
   };
-}
-
-function getVerificationCommands(config: FlowConfig): string[] {
-  return config.verification.commands.filter((command) => command.trim().length > 0);
 }
 
 function writeIfMissing(path: string, content: string, force: boolean): void {
@@ -637,26 +346,14 @@ function packageScriptCommand(manager: "npm" | "pnpm" | "yarn" | "bun", script: 
 function printHelp(): void {
   console.log(`monacori
 
-Validation control plane for AI-generated code changes.
+Desktop review app for AI-generated code changes.
 
 Usage:
   mo
   monacori open [--base HEAD] [--staged] [--tracked-only]
-  monacori check [--include-untracked] [--open] [--no-verify] [--no-diff] [-- <command>]
+  monacori app [--base HEAD] [--staged] [--include-untracked]
   monacori init [--force]
   monacori install [--force] [--apply-agent-docs]
-  monacori verify [-- <command>]
-  monacori diff [--base HEAD] [--staged] [--include-untracked] [--open] [--watch]
-  monacori app [--base HEAD] [--staged] [--include-untracked]
-  monacori review [--base HEAD] [--staged] [--include-untracked]
-  monacori status
-  monacori report [--label manual] [--file report.md]
-
-Default loop:
-  1. Let an AI agent edit code.
-  2. Run: mo
-  3. Run: monacori check --include-untracked
-  4. Only accept the change when verification evidence is clear.
 
 Diff review keys:
   F7         next changed hunk
@@ -680,44 +377,6 @@ Usage:
 
 Options:
   --tracked-only  inspect tracked changes only
-`);
-}
-
-function printCheckHelp(): void {
-  console.log(`monacori check
-
-Run configured verification and create a reviewable diff artifact.
-
-Usage:
-  monacori check [--include-untracked] [--staged] [--base HEAD] [--context 12] [--open] [--no-verify] [--no-diff] [-- <command>]
-
-Examples:
-  monacori check --include-untracked --open
-  monacori check -- npm test
-  monacori check --no-verify --include-untracked
-`);
-}
-
-function printDiffHelp(): void {
-  console.log(`monacori diff
-
-Generate a browser-based side-by-side Git diff review.
-
-Usage:
-  monacori diff [--base HEAD] [--staged] [--include-untracked] [--context 12] [--output review.html] [--open] [--watch] [--port 0]
-
-Keys in the review page:
-  F7         next changed hunk
-  Shift+F7  previous changed hunk
-  ] / [     fallback hunk navigation
-  Shift Shift search indexed files, including unchanged files
-  Cmd/Ctrl+E recent files
-  Cmd/Ctrl+Down jump to symbol under cursor
-
-The sidebar groups changed files as a folder tree. Use Search to filter paths and indexed file contents.
-The Files tab opens read-only source previews, including unchanged files when they fit the local review budget.
-Viewed marks are tied to file signatures, so a changed file becomes unviewed again after reload.
-Use --watch to serve a live review that reloads when the working tree changes.
 `);
 }
 

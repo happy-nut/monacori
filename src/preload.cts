@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { clipboard, contextBridge, ipcRenderer } from "electron";
 
 // Bridges the sandboxed renderer to the main process so .http requests can be
 // executed without CORS or sandbox restrictions. Kept intentionally tiny: the
@@ -12,6 +12,15 @@ contextBridge.exposeInMainWorld("monacoriHttp", {
 contextBridge.exposeInMainWorld("monacoriMenu", {
   onMergedView: (cb: (kind: string) => void): void => {
     ipcRenderer.on("monacori:merged-view", (_event, kind: string) => cb(kind));
+  },
+  // Review menu's Cmd/Ctrl+Shift+N -> open/close the prompt memo in the renderer.
+  onOpenMemo: (cb: () => void): void => {
+    ipcRenderer.on("monacori:open-memo", () => cb());
+  },
+  // Electron watch: main pushes the rebuilt review HTML so the renderer refreshes the diff in place
+  // (no window reload), keeping the integrated terminal's pty sessions alive.
+  onDiffUpdate: (cb: (html: string) => void): void => {
+    ipcRenderer.on("monacori:diff-update", (_event, html: string) => cb(html));
   },
   // Cmd/Ctrl+W from the Window menu -> close the active Files-mode tab in the renderer.
   onCloseTab: (cb: () => void): void => {
