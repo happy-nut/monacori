@@ -509,6 +509,15 @@ function scheduleDiffScroll(row) {
 // reflow-forcing scrollIntoView can run, so collapse them to one (latest element) per animation frame and
 // use block:nearest (no per-row center-jump). Shared by the tree, source caret, and diff caret.
 var pendingScrollEl = null, scrollElRaf = 0;
+// Reveal `el` by keeping it ~fraction of the way down its scroller, scrolling minimally on EVERY move so the
+// view follows the caret CONTINUOUSLY. scrollIntoView('nearest') instead leaves the view still until the
+// caret reaches the edge and then jumps — stuttering ~every viewport while an arrow key is held.
+function revealAt(el, scroller, fraction) {
+  if (!el) return;
+  if (!scroller || !scroller.clientHeight) { try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (x) {} return; }
+  var off = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  scroller.scrollTop += off - scroller.clientHeight * fraction;
+}
 function scheduleScrollIntoView(el) {
   pendingScrollEl = el || null;
   if (scrollElRaf) return;
@@ -897,7 +906,7 @@ function scheduleTreeFocus() {
     if (treeFocusIndex < 0 || treeFocusIndex >= rows.length) return;
     const el = rows[treeFocusIndex];
     document.querySelectorAll('.tree-focus').forEach((e) => { if (e !== el) e.classList.remove('tree-focus'); });
-    if (el) { el.classList.add('tree-focus'); el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+    if (el) { el.classList.add('tree-focus'); revealAt(el, document.querySelector('.sidebar-scroll'), 0.42); }
   });
 }
 
@@ -1583,7 +1592,7 @@ function scheduleDiffReveal(wrapper, side, ri) {
     applyDiffSelection();
     if (!t) return;
     var row = diffRowAt(t.wrapper, t.side, t.ri);
-    if (row && row.scrollIntoView) { try { row.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (x) {} }
+    revealAt(row, document.getElementById('diff2html-container'), 0.42);
   });
 }
 function navEntryOf(kind) {
@@ -3318,7 +3327,7 @@ function scheduleSourceReveal(prev) {
     var lines = f.content.split(/\r?\n/);
     updateSourceCaret(p, lines, f.language || 'text');
     var cl = document.querySelector('.source-row.cursor-line');
-    if (cl && cl.scrollIntoView) { try { cl.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (x) {} }
+    revealAt(cl, document.getElementById('source-body'), 0.42);
   });
 }
 
