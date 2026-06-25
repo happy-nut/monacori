@@ -685,6 +685,10 @@ h1 { margin: 0; font-size: 18px; }
   font-size: 14px; line-height: 1; padding: 0 3px; cursor: pointer; border-radius: 3px;
 }
 .source-tab-close:hover { background: var(--line); color: var(--text); }
+/* Scrolloff: keep the caret / focused row near the vertical middle while navigating, so holding an arrow
+   key scrolls the view CONTINUOUSLY instead of leaving it still until the caret reaches the viewport edge
+   (the "stutter every ~viewport" the user reported). Applies to the source body, the diff, and the sidebar. */
+.source-body, #diff2html-container, .sidebar-scroll { scroll-padding-block: 35vh; }
 .source-body {
   border: 1px solid var(--border);
   overflow: auto;
