@@ -25,7 +25,7 @@ jobs:
   auto-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # describe/rev-list가 전체 히스토리와 태그를 봐야 한다
 
@@ -46,7 +46,7 @@ jobs:
 
       - name: Set up Node
         if: steps.gate.outputs.go == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
