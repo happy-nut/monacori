@@ -328,11 +328,11 @@ body {
 .keys-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; align-items: center; margin-bottom: 2px; }
 .keys-grid kbd {
   justify-self: start;
-  font: 12.5px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 500 14px Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0;
-  padding: 3px 7px;
+  padding: 3px 8px;
   color: var(--text);
   white-space: nowrap;
 }
