@@ -118,20 +118,38 @@ async function sha256(path) {
   return hash.digest("hex");
 }
 
-async function download(url, expectedSha, cacheDir) {
+export async function download(url, expectedSha, cacheDir, {
+  fetchImpl = fetch,
+  wait = (ms) => new Promise((resolveWait) => setTimeout(resolveWait, ms)),
+  attempts = 4,
+} = {}) {
+  mkdirSync(cacheDir, { recursive: true });
   const path = join(cacheDir, basename(new URL(url).pathname));
   if (existsSync(path) && await sha256(path) === expectedSha) return path;
-  rmSync(path, { force: true });
   process.stdout.write(`Downloading ${basename(path)}\n`);
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}): ${url}`);
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(path));
-  const actual = await sha256(path);
-  if (actual !== expectedSha) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     rmSync(path, { force: true });
-    throw new Error(`SHA-256 mismatch for ${url}: expected ${expectedSha}, got ${actual}`);
+    try {
+      const response = await fetchImpl(url, { redirect: "follow" });
+      if (!response.ok || !response.body) {
+        const error = new Error(`Download failed (${response.status}): ${url}`);
+        error.retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        try { await response.body?.cancel(); } catch { /* best effort */ }
+        throw error;
+      }
+      await pipeline(Readable.fromWeb(response.body), createWriteStream(path));
+      const actual = await sha256(path);
+      if (actual === expectedSha) return path;
+      throw new Error(`SHA-256 mismatch for ${url}: expected ${expectedSha}, got ${actual}`);
+    } catch (error) {
+      rmSync(path, { force: true });
+      lastError = error;
+      if (error?.retryable === false || attempt === attempts - 1) throw error;
+      await wait(500 * (2 ** attempt));
+    }
   }
-  return path;
+  throw lastError;
 }
 
 function walk(root, predicate) {

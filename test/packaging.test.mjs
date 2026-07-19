@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMacDmg } from "../scripts/create-dmg.mjs";
@@ -15,6 +17,7 @@ import {
 import { waitForKakapoRenderer } from "../scripts/smoke-linux.mjs";
 import {
   BUNDLED_LANGUAGE_FAMILIES,
+  download,
   expectedServerPaths,
   platformTarget,
   SERVER_VERSIONS,
@@ -102,6 +105,30 @@ test("Linux ARM64 clang packaging dereferences temporary .deb links", () => {
   assert.match(installer, /cpSync\(realpathSync\(found\), join\(output, "lib", library\)\)/);
 });
 
+test("language-server downloads retry transient server failures without weakening checksums", async () => {
+  const cache = mkdtempSync(join(tmpdir(), "kakapo-download-test-"));
+  const payload = Buffer.from("verified-sidecar", "utf8");
+  const expectedSha = createHash("sha256").update(payload).digest("hex");
+  let requests = 0;
+  const waits = [];
+  try {
+    const path = await download("https://example.test/sidecar.tar.gz", expectedSha, cache, {
+      fetchImpl: async () => {
+        requests += 1;
+        return requests < 3
+          ? new Response(null, { status: 500 })
+          : new Response(payload, { status: 200 });
+      },
+      wait: async (ms) => { waits.push(ms); },
+    });
+    assert.equal(readFileSync(path, "utf8"), "verified-sidecar");
+    assert.equal(requests, 3);
+    assert.deepEqual(waits, [500, 1_000]);
+  } finally {
+    rmSync(cache, { recursive: true, force: true });
+  }
+});
+
 test("Linux GUI smoke requires an actual Kakapo renderer page", async () => {
   const page = await waitForKakapoRenderer({
     port: 9222,
@@ -132,6 +159,7 @@ test("Linux release workflow tests, packages, boots, and publishes both native a
   assert.equal(packageJson.scripts["smoke:linux"], "node scripts/smoke-linux.mjs");
   assert.match(workflow, /runner: ubuntu-24\.04\n/);
   assert.match(workflow, /runner: ubuntu-24\.04-arm/);
+  assert.match(workflow, /!startsWith\(github\.event\.head_commit\.message, 'chore\(release\):'\)/);
   assert.match(workflow, /run: npm test/);
   assert.match(workflow, /npm run dist:linux:\$\{\{ matrix\.arch \}\}/);
   assert.match(workflow, /npm run smoke:linux/);
