@@ -111,6 +111,10 @@ test("history keyboard: Cmd+9 then ArrowDown navigates commits before opening a 
   const css = Array.from(v.document.querySelectorAll("style"), (style) => style.textContent || "").join("\n");
   assert.match(css, /\.history-view\s*\{[^}]*inset:\s*0 0 0 var\(--rail-width\)/, "History starts after the desktop rail");
   assert.match(css, /body\.native-app\s+\.history-bar\s*\{[^}]*padding-left:\s*var\(--native-title-safe-after-rail\)/, "History title uses the shared macOS traffic-light safe inset");
+  // The dialog itself holds keyboard focus on open, so its default :focus ring would hug the window's top
+  // edge (across the macOS traffic lights) and never fade. It must be suppressed; the active row is the cue.
+  assert.equal(v.document.activeElement, v.$("#history-view"), "the History dialog holds keyboard focus on open");
+  assert.match(css, /\.history-view:focus\s*\{[^}]*outline:\s*none/, "the focus-holding History dialog suppresses its own focus outline");
   assert.equal(v.$("#history-list .hrow.active").dataset.sha, "aaaaaaaa", "newest commit selected");
   assert.equal(v.$("#history-detail").classList.contains("hidden"), true, "commit graph owns the full canvas before Enter");
   assert.deepEqual(calls, [], "opening history does not auto-load a narrow diff preview");

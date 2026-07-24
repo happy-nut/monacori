@@ -1867,6 +1867,11 @@ body:has(#settings-modal:not(.hidden)) .code-cursor { display: none; }
 /* ===== Git history view (Cmd+9): full commit graph with a floating changed-files + diff workspace. ===== */
 .history-view { position: fixed; inset: 0 0 0 var(--rail-width); z-index: 75; display: flex; flex-direction: column; background: var(--bg); }
 .history-view.hidden { display: none; }
+/* The dialog holds keyboard focus as a bare container (tabindex=-1, focused on open and whenever the detail
+   closes). Because it opens off a keypress, Chromium paints its :focus-visible ring — which hugs the window's
+   top-left edge, crosses the macOS traffic lights, and stays put for the whole session (it is focus, not the
+   timed arrival flash). The active commit row is the real selection cue, so drop the container's own outline. */
+.history-view:focus { outline: none; }
 .history-bar { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--sidebar); border-bottom: 1px solid var(--border); }
 .history-title { font-weight: 650; font-size: 13px; letter-spacing: 0.02em; }
 .history-scope { min-width: 0; max-width: min(42vw, 620px); overflow: hidden; color: var(--muted); font: 11px/1.2 Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
